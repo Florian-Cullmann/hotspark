@@ -2,7 +2,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { request } from "node:http";
 import type { AgentOperation } from "../../application-spec/src/index.js";
-export const scopes = ["read", "deploy", "admin"] as const;
+export const scopes = ["projects:read","projects:create","projects:update","projects:delete","logs:read","domains:manage","admin","read","deploy"] as const;
 export type Scope = (typeof scopes)[number];
 export function tokenDigest(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -43,6 +43,7 @@ export async function secret(name: string) {
 export async function agentRequest(
   socketPath: string,
   operation: AgentOperation,
+  token?: string,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const req = request(
@@ -50,7 +51,7 @@ export async function agentRequest(
         socketPath,
         path: "/v1/operations",
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(token?{authorization:`Bearer ${token}`}:{}) },
         timeout: 900_000,
       },
       (res) => {
@@ -63,7 +64,7 @@ export async function agentRequest(
         res.on("error", reject);
         res.on("end", () => {
           if (res.statusCode !== 200)
-            return reject(new Error("Agent operation failed"));
+            return reject(Object.assign(new Error("Agent operation failed"),{statusCode:res.statusCode}));
           try {
             resolve(JSON.parse(data));
           } catch {
@@ -76,4 +77,9 @@ export async function agentRequest(
     req.on("error", reject);
     req.end(JSON.stringify(operation));
   });
+}
+
+export function hasScope(granted:string[],required:Scope){
+ const legacy:Record<string,string[]>={read:['projects:read','logs:read'],deploy:['projects:read','projects:create','projects:update','projects:delete','domains:manage']};
+ return granted.includes('admin')||granted.includes(required)||granted.some(s=>legacy[s]?.includes(required));
 }

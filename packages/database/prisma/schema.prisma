@@ -28,6 +28,14 @@ model Project {
  id String @id @default(uuid()) @db.Uuid
  name String @unique
  spec Json
+ encryptedSecrets String?
+ desiredState String @default("stopped")
+ observedState String @default("created")
+ restoreOnDrift Boolean @default(true)
+ revision Int @default(1)
+ runtimeVersion Int @default(1)
+ lastObservedAt DateTime?
+ deletedAt DateTime?
  createdAt DateTime @default(now())
  updatedAt DateTime @updatedAt
  services Service[]
@@ -66,6 +74,14 @@ model Job {
  deploymentId String? @db.Uuid
  deployment Deployment? @relation(fields:[deploymentId],references:[id])
  operation String
+ payload Json?
+ attempts Int @default(0)
+ maxAttempts Int @default(3)
+ availableAt DateTime @default(now())
+ leaseUntil DateTime?
+ workerId String?
+ progress Int @default(0)
+ events JobEvent[]
  status String @default("queued")
  error String?
  createdAt DateTime @default(now())
@@ -81,4 +97,23 @@ model AuditEvent {
  requestId String
  createdAt DateTime @default(now())
  @@index([createdAt])
+}
+
+model JobEvent {
+ id String @id @default(uuid()) @db.Uuid
+ jobId String @db.Uuid
+ job Job @relation(fields:[jobId],references:[id])
+ message String
+ progress Int
+ createdAt DateTime @default(now())
+ @@index([jobId,createdAt])
+}
+model IdempotencyRecord {
+ id String @id @default(uuid()) @db.Uuid
+ actorId String
+ key String
+ requestHash String
+ response Json
+ createdAt DateTime @default(now())
+ @@unique([actorId,key])
 }
