@@ -1,0 +1,11 @@
+{
+  "name": "hotspark-yarn-fixture",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "packageManager": "yarn@4.9.2",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node server.mjs"
+  }
+}

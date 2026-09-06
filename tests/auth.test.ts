@@ -20,3 +20,26 @@ it("uses distinct high entropy tokens and irreversible storage digests", () => {
   expect(tokenDigest(a)).toHaveLength(64);
   expect(tokenDigest(a)).not.toContain(a);
 });
+
+import { seal, unseal, redact } from "../packages/shared/src/secrets.js";
+import { hasScope } from "../packages/shared/src/index.js";
+it("encrypts with randomized nonces and authenticates project identity", () => {
+  const key = "a".repeat(64),
+    value = { API_KEY: "sensitive-value" };
+  const first = seal(value, key, "project:a"),
+    second = seal(value, key, "project:a");
+  expect(first).not.toBe(second);
+  expect(first).not.toContain(value.API_KEY);
+  expect(unseal(first, key, "project:a")).toEqual(value);
+  expect(() => unseal(first, key, "project:b")).toThrow();
+  expect(() => unseal(first, "b".repeat(64), "project:a")).toThrow();
+  expect(
+    redact("sensitive-value postgresql://user:pass@db/app", [value.API_KEY]),
+  ).not.toContain("pass@");
+});
+it("keeps fine-grained scopes separate and supports legacy tokens", () => {
+  expect(hasScope(["projects:read"], "projects:create")).toBe(false);
+  expect(hasScope(["projects:create"], "domains:manage")).toBe(false);
+  expect(hasScope(["read"], "projects:read")).toBe(true);
+  expect(hasScope(["admin"], "projects:delete")).toBe(true);
+});

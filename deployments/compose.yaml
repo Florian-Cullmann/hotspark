@@ -37,9 +37,13 @@ services:
     tmpfs: [/tmp]
     environment:
       TLS_ENABLED: ${TLS_ENABLED:-false}
+      SECRETS_KEY_FILE: /run/secrets/secrets_key
+      AGENT_TOKEN_FILE: /run/secrets/agent_token
+    secrets: [secrets_key, agent_token]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /run/hotspark:/run/hotspark
+      - /run/hotspark-secrets:/run/hotspark-secrets
       - /var/lib/hotspark/projects:/var/lib/hotspark/projects
       - /var/lib/hotspark/routes:/var/lib/hotspark/routes
     networks: [agent-egress]
@@ -67,7 +71,9 @@ services:
       DATABASE_PASSWORD_FILE: /run/secrets/database_password
       ADMIN_PASSWORD_FILE: /run/secrets/admin_password
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
-    secrets: [database_password, admin_password]
+      SECRETS_KEY_FILE: /run/secrets/secrets_key
+      AGENT_TOKEN_FILE: /run/secrets/agent_token
+    secrets: [database_password, admin_password, secrets_key, agent_token]
     volumes: [/run/hotspark:/run/hotspark:ro]
     ports: ["127.0.0.1:3001:3001"]
     networks: [control, admin]
@@ -109,6 +115,28 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+  maintenance:
+    <<: *security
+    image: hotspark/maintenance:${HOTSPARK_VERSION:?version required}
+    build:
+      { context: .., dockerfile: deployments/Dockerfile, target: maintenance }
+    user: "10001:10001"
+    read_only: true
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      proxy: { aliases: [hotspark-maintenance] }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
   proxy:
     <<: *security
     image: traefik:v3.6.6@sha256:82d3d16dde0474a51fef00b28de143d48b67f7a27453224d5e7b5aaefff26a97
@@ -134,3 +162,6 @@ networks:
 secrets:
   database_password: { file: /etc/hotspark/secrets/database_password }
   admin_password: { file: /etc/hotspark/secrets/admin_password }
+
+  secrets_key: { file: /etc/hotspark/secrets/secrets_key }
+  agent_token: { file: /etc/hotspark/secrets/agent_token }

@@ -2,7 +2,17 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { request } from "node:http";
 import type { AgentOperation } from "../../application-spec/src/index.js";
-export const scopes = ["projects:read","projects:create","projects:update","projects:delete","logs:read","domains:manage","admin","read","deploy"] as const;
+export const scopes = [
+  "projects:read",
+  "projects:create",
+  "projects:update",
+  "projects:delete",
+  "logs:read",
+  "domains:manage",
+  "admin",
+  "read",
+  "deploy",
+] as const;
 export type Scope = (typeof scopes)[number];
 export function tokenDigest(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -51,20 +61,27 @@ export async function agentRequest(
         socketPath,
         path: "/v1/operations",
         method: "POST",
-        headers: { "content-type": "application/json", ...(token?{authorization:`Bearer ${token}`}:{}) },
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         timeout: 900_000,
       },
       (res) => {
         let data = "";
         res.on("data", (chunk) => {
           data += chunk;
-          if (data.length > 1_000_000)
+          if (Buffer.byteLength(data) > 2_000_000)
             res.destroy(new Error("Agent response too large"));
         });
         res.on("error", reject);
         res.on("end", () => {
           if (res.statusCode !== 200)
-            return reject(Object.assign(new Error("Agent operation failed"),{statusCode:res.statusCode}));
+            return reject(
+              Object.assign(new Error("Agent operation failed"), {
+                statusCode: res.statusCode,
+              }),
+            );
           try {
             resolve(JSON.parse(data));
           } catch {
@@ -79,7 +96,20 @@ export async function agentRequest(
   });
 }
 
-export function hasScope(granted:string[],required:Scope){
- const legacy:Record<string,string[]>={read:['projects:read','logs:read'],deploy:['projects:read','projects:create','projects:update','projects:delete','domains:manage']};
- return granted.includes('admin')||granted.includes(required)||granted.some(s=>legacy[s]?.includes(required));
+export function hasScope(granted: string[], required: Scope) {
+  const legacy: Record<string, string[]> = {
+    read: ["projects:read", "logs:read"],
+    deploy: [
+      "projects:read",
+      "projects:create",
+      "projects:update",
+      "projects:delete",
+      "domains:manage",
+    ],
+  };
+  return (
+    granted.includes("admin") ||
+    granted.includes(required) ||
+    granted.some((s) => legacy[s]?.includes(required))
+  );
 }

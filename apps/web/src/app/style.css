@@ -128,3 +128,79 @@ footer {
     flex-wrap: wrap;
   }
 }
+a {
+  color: #edab58;
+  text-decoration: none;
+}
+nav {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+select {
+  padding: 0.7rem;
+  background: #11151b;
+  color: inherit;
+  border: 1px solid #586577;
+  border-radius: 6px;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+input[type="checkbox"] {
+  display: inline;
+  width: auto;
+  margin-right: 0.5rem;
+}
+.cards,
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1rem;
+}
+.cards section {
+  margin: 0;
+}
+.cards strong {
+  font-size: 1.6rem;
+}
+.fields label {
+  margin: 0.5rem 0;
+}
+details {
+  padding: 1rem 0;
+}
+summary {
+  cursor: pointer;
+}
+progress {
+  width: 100%;
+}
+small {
+  color: #a8b4c4;
+}
+pre {
+  max-height: 500px;
+  overflow: auto;
+}
+button[aria-pressed="true"] {
+  outline: 2px solid #fff;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  padding: 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid #364658;
+}
+code {
+  overflow-wrap: anywhere;
+}

@@ -4,7 +4,7 @@
 
 Hotspark turns a versioned ApplicationSpec into a deployment plan and isolated Docker Compose projects. An unprivileged TypeScript API and Next.js administration UI manage metadata in PostgreSQL. A separate privileged host agent executes a small set of validated operations over a Unix socket. Traefik discovers routes through watched configuration files, without a Docker socket.
 
-Implemented: local administrator login, hashed scoped API tokens, project creation, domain reservations, deployment/start/stop jobs, audit events, digest-pinned images, commit-pinned GitHub builds through BuildKit, PostgreSQL volumes and generated passwords, health-aware routing, a typed SDK, OpenAPI, and a Debian 13 installer.
+Implemented: asynchronous provisioning of Next.js, React/Vite, Node.js and PostgreSQL stacks; generated database connections; controlled Prisma migrations; encrypted secrets; scoped/revocable tokens; durable jobs and reconciliation; lifecycle and domain management; bounded logs; a functional administration UI, typed SDK, OpenAPI and Debian 13 installer.
 
 ```mermaid
 flowchart LR
@@ -49,7 +49,7 @@ npm run test:integration
 
 ```text
 apps/                 web, api, privileged agent
-packages/             application-spec, database, shared, sdk
+packages/             application-spec, providers, database, shared, sdk
 installer/            Debian bootstrap and platform lifecycle command
 deployments/          production Dockerfile/Compose and local database
 scripts/              development, release packaging, OpenAPI generation
@@ -59,6 +59,10 @@ docs/                architecture, security, installation, specification, develo
 
 Read [architecture](docs/architecture.md), [security](docs/security-model.md), [ApplicationSpec](docs/application-spec.md), and [development](docs/development.md). The [OpenAPI document](docs/openapi.json) is generated from the API route definitions.
 
-Before production use: implement worker leases/reconciliation, remote-agent mTLS, backup/restore automation, release signing and prebuilt multi-architecture images, stronger build/network isolation, domain ownership verification, secret rotation, and migration/rollback policies. Automatic updates and multi-user access are intentionally not advertised as complete.
+Before production use: implement remote-agent mTLS, backup/restore automation, release signing and prebuilt multi-architecture images, stronger build/network isolation, domain ownership verification, key rotation, and migration/rollback policies. Automatic updates and multi-user access are intentionally not advertised as complete.
+
+Provisioning examples and behavior: [API](docs/api.md), [lifecycle](docs/application-lifecycle.md), [providers](docs/service-providers.md), [network isolation](docs/network-isolation.md), [secrets](docs/secrets.md), [agent protocol](docs/agent-protocol.md).
 
 License: [Apache-2.0](LICENSE).
+
+The 0.3 deployment engine builds immutable images, health-checks independent candidates, switches watched Traefik routes, supports a shared maintenance page, and rolls back to retained images. See [deployments](docs/deployments.md), [maintenance](docs/maintenance-mode.md), [rollback](docs/rollback.md), [database migrations](docs/database-migrations.md), and [recovery](docs/recovery.md).

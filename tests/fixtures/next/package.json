@@ -1,0 +1,20 @@
+{
+  "name": "hotspark-next-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "prisma generate && next build --webpack",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "prisma": "6.19.3",
+    "next": "16.3.4",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0"
+  }
+}

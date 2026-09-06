@@ -1,6 +1,6 @@
 {
   "name": "hotspark",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -21,7 +21,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:migrate": "prisma migrate deploy --schema packages/database/prisma/schema.prisma",
-    "openapi": "tsx scripts/openapi.ts"
+    "openapi": "tsx scripts/openapi.ts",
+    "test:e2e": "bash tests/releases.integration.sh",
+    "test:providers": "bash tests/providers.integration.sh"
   },
   "dependencies": {
     "@fastify/rate-limit": "10.3.0",

@@ -1,3 +1,18 @@
+import {
+  createProject,
+  updateProject,
+  idempotent,
+  publicProject,
+  domainRecords,
+  reserveDomains,
+  publicJob,
+  publicDeployment,
+  enqueue,
+  projectLock,
+  audit,
+  fail as projectFail,
+} from "./projects.js";
+import type { AgentClient } from "./worker.js";
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
@@ -6,7 +21,10 @@ import { Prisma } from "@prisma/client";
 import type { PrismaClient } from "../../../packages/database/src/index.js";
 import {
   applicationSpecSchema,
-  applicationSpecJsonSchema,
+  createProjectSchema,
+  patchProjectSchema,
+  nameSchema,
+  domainSchema,
   projectIdSchema,
 } from "../../../packages/application-spec/src/index.js";
 import {
@@ -15,6 +33,7 @@ import {
   verifyPassword,
   scopes,
   type Scope,
+  hasScope,
 } from "../../../packages/shared/src/index.js";
 const loginSchema = z
   .object({
@@ -44,7 +63,10 @@ const errorSchema = {
   },
   required: ["error"],
 };
-export async function createApp(db: PrismaClient) {
+export async function createApp(
+  db: PrismaClient,
+  options: { secretsKey?: string; agent?: AgentClient } = {},
+) {
   const app = Fastify({
     ajv: {
       customOptions: {
@@ -67,7 +89,7 @@ export async function createApp(db: PrismaClient) {
   await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
   await app.register(swagger, {
     openapi: {
-      info: { title: "Hotspark API", version: "0.1.0" },
+      info: { title: "Hotspark API", version: "0.3.0" },
       servers: [{ url: "/" }],
       components: {
         securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
@@ -107,7 +129,9 @@ export async function createApp(db: PrismaClient) {
               ? "NOT_FOUND"
               : status === 429
                 ? "RATE_LIMITED"
-                : "BAD_REQUEST";
+                : status === 409
+                  ? "CONFLICT"
+                  : "BAD_REQUEST";
       message =
         status === 401
           ? "Invalid or expired credentials"
@@ -115,7 +139,7 @@ export async function createApp(db: PrismaClient) {
             ? "Insufficient scope"
             : status === 404
               ? "Resource not found"
-              : "Request rejected";
+              : error.message;
     }
     // Never log raw database / Docker errors: they can include connection strings or secrets.
     if (status === 500) req.log.error({ requestId: req.id }, "Request failed");
@@ -147,8 +171,7 @@ export async function createApp(db: PrismaClient) {
       token.user.role !== "admin"
     )
       fail(401);
-    if (!token.scopes.includes(scope) && !token.scopes.includes("admin"))
-      fail(403);
+    if (!hasScope(token.scopes, scope)) fail(403);
     return token;
   }
   const secured = (scope: Scope, body?: object, successStatus = 200) => ({
@@ -229,147 +252,520 @@ export async function createApp(db: PrismaClient) {
         .send({ token, expiresAt });
     },
   );
-  app.get("/api/v1/projects", secured("read"), async () =>
-    db.project.findMany({ orderBy: { createdAt: "desc" } }),
+  const secretsKey = options.secretsKey;
+  const key = () => {
+    if (!secretsKey) throw new Error("Encryption key not configured");
+    return secretsKey;
+  };
+  const agent = async (op: Parameters<AgentClient>[0]) => {
+    if (!options.agent) throw new Error("Agent not configured");
+    return options.agent(op);
+  };
+  const idOf = (params: unknown) =>
+    projectIdSchema.parse((params as { id: string }).id);
+  const getProject = async (id: string) => {
+    const project = await db.project.findUnique({ where: { id } });
+    if (!project || project.deletedAt) projectFail(404);
+    return project;
+  };
+  const mutate = async (
+    req: {
+      headers: {
+        authorization?: string;
+        "idempotency-key"?: string | string[];
+      };
+      id: string;
+    },
+    scope: Scope,
+    input: unknown,
+    work: (
+      tx: Prisma.TransactionClient,
+      actorId: string,
+      tokenId: string,
+    ) => Promise<unknown>,
+  ) => {
+    const actor = await authenticate(req.headers.authorization, scope);
+    const raw = req.headers["idempotency-key"];
+    if (Array.isArray(raw)) projectFail(400);
+    return idempotent(
+      db,
+      actor.userId,
+      raw,
+      input,
+      async (tx) => {
+        const result = await work(tx, actor.userId, actor.id);
+        if (
+          result &&
+          typeof result === "object" &&
+          "jobId" in result &&
+          typeof result.jobId === "string"
+        )
+          await tx.deployment.updateMany({
+            where: { jobs: { some: { id: result.jobId } } },
+            data: { tokenId: actor.id },
+          });
+        return result;
+      },
+      key(),
+    );
+  };
+  app.get("/api/v1/projects", secured("projects:read"), async () =>
+    (
+      await db.project.findMany({
+        where: { deletedAt: null },
+        take: 100,
+        orderBy: { createdAt: "desc" },
+      })
+    ).map(publicProject),
   );
   app.post(
     "/api/v1/projects",
-    secured("deploy", applicationSpecJsonSchema, 201),
+    secured(
+      "projects:create",
+      z.toJSONSchema(createProjectSchema, { target: "draft-7", io: "input" }),
+      202,
+    ),
     async (req, reply) => {
-      const spec = applicationSpecSchema.parse(req.body);
-      const actor = await authenticate(req.headers.authorization, "deploy");
-      const project = await db.$transaction(async (tx) => {
-        const project = await tx.project.create({
-          data: {
-            name: spec.metadata.name,
-            spec: spec as Prisma.InputJsonValue,
-            services: {
-              create: Object.entries(spec.services).map(([name, s]) => ({
-                name,
-                type: s.type,
-              })),
-            },
-            domains: {
-              create: Object.entries(spec.services).flatMap(
-                ([serviceName, s]) =>
-                  "domains" in s
-                    ? s.domains.map((hostname) => ({ hostname, serviceName }))
-                    : [],
-              ),
-            },
-          },
-        });
-        await tx.auditEvent.create({
-          data: {
-            actorId: actor.userId,
-            action: "project.create",
-            resourceId: project.id,
-            requestId: req.id,
-          },
-        });
-        return project;
-      });
-      return reply.code(201).send(project);
+      const input = createProjectSchema.parse(req.body);
+      if (
+        Object.values(input.spec.services).some(
+          (s) => s.type !== "postgres" && s.domains.length,
+        )
+      )
+        await authenticate(req.headers.authorization, "domains:manage");
+      const response = await mutate(
+        req,
+        "projects:create",
+        { method: "create", ...input },
+        (tx, actor) =>
+          createProject(tx, input.spec, input.secrets, key(), actor, req.id),
+      );
+      return reply.code(202).send(response);
     },
   );
-  app.get("/api/v1/projects/:id", secured("read"), async (req) => {
-    const { id } = req.params as { id: string };
-    const project = await db.project.findUnique({
-      where: { id: projectIdSchema.parse(id) },
+  app.get("/api/v1/projects/:id", secured("projects:read"), async (req) =>
+    publicProject(await getProject(idOf(req.params))),
+  );
+  app.patch(
+    "/api/v1/projects/:id",
+    secured(
+      "projects:update",
+      z.toJSONSchema(patchProjectSchema, { target: "draft-7", io: "input" }),
+      202,
+    ),
+    async (req, reply) => {
+      const id = idOf(req.params),
+        input = patchProjectSchema.parse(req.body);
+      const actorToken = await authenticate(
+        req.headers.authorization,
+        "projects:update",
+      );
+      return reply
+        .code(202)
+        .send(
+          await mutate(
+            req,
+            "projects:update",
+            { method: "patch", id, ...input },
+            (tx, actor) =>
+              updateProject(
+                tx,
+                id,
+                input.spec,
+                input.secrets,
+                key(),
+                actor,
+                req.id,
+                input.restoreOnDrift,
+                hasScope(actorToken.scopes, "domains:manage"),
+              ),
+          ),
+        );
+    },
+  );
+  const lifecycle = async (
+    req: {
+      params: unknown;
+      headers: {
+        authorization?: string;
+        "idempotency-key"?: string | string[];
+      };
+      id: string;
+    },
+    operation: string,
+    scope: Scope,
+  ) => {
+    const id = idOf(req.params);
+    return mutate(
+      req,
+      scope,
+      { method: operation, id },
+      async (tx, actor, tokenId) => {
+        await projectLock(tx, id);
+        const project = await tx.project.findUnique({ where: { id } });
+        if (!project || project.deletedAt) projectFail(404);
+        return enqueue(tx, id, operation, actor, req.id, { tokenId });
+      },
+    );
+  };
+  for (const operation of ["start", "stop", "restart", "deploy"] as const)
+    app.post(
+      `/api/v1/projects/:id/${operation}`,
+      secured("projects:update", undefined, 202),
+      async (req, reply) =>
+        reply
+          .code(202)
+          .send(await lifecycle(req, operation, "projects:update")),
+    );
+  app.post(
+    "/api/v1/projects/:id/deployments",
+    secured("projects:update", undefined, 202),
+    async (req, reply) =>
+      reply.code(202).send(await lifecycle(req, "deploy", "projects:update")),
+  );
+  const rollbackInput = z.object({ deploymentId: z.string().uuid() }).strict();
+  app.post(
+    "/api/v1/projects/:id/rollbacks",
+    secured(
+      "projects:update",
+      z.toJSONSchema(rollbackInput, { target: "draft-7", io: "input" }),
+      202,
+    ),
+    async (req, reply) => {
+      const id = idOf(req.params),
+        input = rollbackInput.parse(req.body);
+      return reply.code(202).send(
+        await mutate(
+          req,
+          "projects:update",
+          { method: "rollback", id, ...input },
+          async (tx, actor, tokenId) => {
+            await projectLock(tx, id);
+            const p = await tx.project.findUnique({ where: { id } });
+            if (!p || p.deletedAt) projectFail(404);
+            const target = await tx.deployment.findUnique({
+              where: { id: input.deploymentId },
+            });
+            if (!target || target.projectId !== id) projectFail(404);
+            const current = applicationSpecSchema.parse(p.spec),
+              old = applicationSpecSchema.parse(
+                target.resolvedSpec ?? target.spec,
+              );
+            if (
+              JSON.stringify(domainRecords(current)) !==
+              JSON.stringify(domainRecords(old))
+            )
+              await authenticate(req.headers.authorization, "domains:manage");
+            await reserveDomains(tx, id, old);
+            return enqueue(tx, id, "deploy", actor, req.id, {
+              rollbackOf: input.deploymentId,
+              tokenId,
+            });
+          },
+        ),
+      );
+    },
+  );
+  const maintenanceInput = z.object({ enabled: z.boolean() }).strict();
+  app.put(
+    "/api/v1/projects/:id/maintenance",
+    secured(
+      "projects:update",
+      z.toJSONSchema(maintenanceInput, { target: "draft-7", io: "input" }),
+      202,
+    ),
+    async (req, reply) => {
+      const id = idOf(req.params),
+        input = maintenanceInput.parse(req.body);
+      return reply.code(202).send(
+        await mutate(
+          req,
+          "projects:update",
+          { method: "maintenance", id, ...input },
+          async (tx, actor, tokenId) => {
+            await projectLock(tx, id);
+            const p = await tx.project.findUnique({ where: { id } });
+            if (!p || p.deletedAt) projectFail(404);
+            return enqueue(tx, id, "maintenance", actor, req.id, {
+              maintenanceEnabled: input.enabled,
+              tokenId,
+            });
+          },
+        ),
+      );
+    },
+  );
+  app.get("/api/v1/deployments/:id", secured("projects:read"), async (req) => {
+    const release = await db.deployment.findUnique({
+      where: { id: idOf(req.params) },
     });
-    if (!project) fail(404);
-    return project;
+    if (!release) projectFail(404);
+    await getProject(release.projectId);
+    const runtime = await agent({
+      operation: "deployment-details",
+      projectId: release.projectId,
+      deploymentId: release.id,
+    }).catch(() => null);
+    if (runtime && typeof runtime === "object" && "logs" in runtime)
+      delete runtime.logs;
+    return { ...publicDeployment(release), runtime };
   });
+  app.get("/api/v1/deployments/:id/logs", secured("logs:read"), async (req) => {
+    const release = await db.deployment.findUnique({
+      where: { id: idOf(req.params) },
+    });
+    if (!release) projectFail(404);
+    await getProject(release.projectId);
+    return agent({
+      operation: "deployment-details",
+      projectId: release.projectId,
+      deploymentId: release.id,
+    });
+  });
+  app.post(
+    "/api/v1/deployments/:id/cancel",
+    secured("projects:update"),
+    async (req) => {
+      const release = await db.deployment.findUnique({
+        where: { id: idOf(req.params) },
+      });
+      if (!release) projectFail(404);
+      await getProject(release.projectId);
+      const result = await agent({
+        operation: "cancel-deployment",
+        projectId: release.projectId,
+        deploymentId: release.id,
+      });
+      const actor = await authenticate(
+        req.headers.authorization,
+        "projects:update",
+      );
+      await db.auditEvent.create({
+        data: {
+          actorId: actor.userId,
+          action: "deployment.cancel.requested",
+          resourceId: release.id,
+          requestId: req.id,
+        },
+      });
+      return result;
+    },
+  );
+  app.delete(
+    "/api/v1/projects/:id",
+    secured("projects:delete", undefined, 202),
+    async (req, reply) =>
+      reply.code(202).send(await lifecycle(req, "remove", "projects:delete")),
+  );
   for (const resource of [
     "services",
     "domains",
-    "deployments",
     "jobs",
-  ] as const) {
+    "deployments",
+  ] as const)
     app.get(
       `/api/v1/projects/:id/${resource}`,
-      secured("read"),
+      secured("projects:read"),
       async (req) => {
-        const projectId = projectIdSchema.parse(
-          (req.params as { id: string }).id,
-        );
-        if (!(await db.project.findUnique({ where: { id: projectId } })))
-          fail(404);
+        const projectId = idOf(req.params);
+        await getProject(projectId);
         switch (resource) {
           case "services":
             return db.service.findMany({ where: { projectId } });
           case "domains":
             return db.domain.findMany({ where: { projectId } });
-          case "deployments":
-            return db.deployment.findMany({
-              where: { projectId },
-              take: 100,
-              orderBy: { createdAt: "desc" },
-            });
           case "jobs":
-            return db.job.findMany({
-              where: { projectId },
-              take: 100,
-              orderBy: { createdAt: "desc" },
-            });
+            return (
+              await db.job.findMany({
+                where: { projectId },
+                take: 100,
+                orderBy: { createdAt: "desc" },
+              })
+            ).map(publicJob);
+          case "deployments":
+            return (
+              await db.deployment.findMany({
+                where: { projectId },
+                take: 100,
+                orderBy: { createdAt: "desc" },
+              })
+            ).map(publicDeployment);
         }
       },
     );
-  }
-  for (const operation of ["deploy", "start", "stop"] as const) {
-    app.post(
-      `/api/v1/projects/:id/${operation}`,
-      secured("deploy", undefined, 202),
-      async (req, reply) => {
-        const projectId = projectIdSchema.parse(
-          (req.params as { id: string }).id,
-        );
-        const actor = await authenticate(req.headers.authorization, "deploy");
-        const job = await db.$transaction(async (tx) => {
-          // Serialize scheduling per project across concurrent requests.
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${projectId}))`;
-          const project = await tx.project.findUnique({
-            where: { id: projectId },
-          });
-          if (!project) fail(404);
-          if (
-            await tx.job.findFirst({
-              where: { projectId, status: { in: ["queued", "running"] } },
-            })
-          )
-            fail(409);
-          const deployment =
-            operation === "deploy"
-              ? await tx.deployment.create({
-                  data: {
-                    projectId,
-                    spec: project.spec as Prisma.InputJsonValue,
-                  },
-                })
-              : null;
-          const job = await tx.job.create({
-            data: { projectId, operation, deploymentId: deployment?.id },
-          });
-          await tx.auditEvent.create({
-            data: {
-              actorId: actor.userId,
-              action: `project.${operation}`,
-              resourceId: projectId,
-              requestId: req.id,
-            },
-          });
-          return job;
-        });
-        return reply.code(202).send(job);
-      },
-    );
-  }
-  app.get("/api/v1/jobs/:id", secured("read"), async (req) => {
+  const domainInput = z
+    .object({ service: nameSchema, domains: z.array(domainSchema).max(10) })
+    .strict();
+  app.put(
+    "/api/v1/projects/:id/domains",
+    secured(
+      "domains:manage",
+      z.toJSONSchema(domainInput, { target: "draft-7", io: "input" }),
+      202,
+    ),
+    async (req, reply) => {
+      const id = idOf(req.params),
+        input = domainInput.parse(req.body);
+      await authenticate(req.headers.authorization, "projects:update");
+      return reply.code(202).send(
+        await mutate(
+          req,
+          "domains:manage",
+          { method: "domains", id, ...input },
+          async (tx, actor) => {
+            await projectLock(tx, id);
+            const p = await tx.project.findUnique({ where: { id } });
+            if (!p || p.deletedAt) projectFail(404);
+            const spec = applicationSpecSchema.parse(p.spec);
+            const service = spec.services[input.service];
+            if (!service || service.type === "postgres")
+              projectFail(400, "Domains require an HTTP service");
+            service.domains = input.domains;
+            return updateProject(tx, id, spec, {}, key(), actor, req.id);
+          },
+        ),
+      );
+    },
+  );
+  app.get("/api/v1/projects/:id/logs", secured("logs:read"), async (req) => {
+    const id = idOf(req.params);
+    await getProject(id);
+    const query = z
+      .object({
+        service: nameSchema,
+        lines: z.coerce.number().int().min(1).max(1000).default(100),
+        stream: z.enum(["stdout", "stderr", "both"]).default("both"),
+      })
+      .strict()
+      .parse(req.query);
+    return agent({ operation: "logs", projectId: id, ...query });
+  });
+  app.get(
+    "/api/v1/projects/:id/runtime",
+    secured("projects:read"),
+    async (req) => {
+      const id = idOf(req.params);
+      await getProject(id);
+      return agent({ operation: "inspect", projectId: id });
+    },
+  );
+  app.get("/api/v1/jobs/:id", secured("projects:read"), async (req) => {
     const job = await db.job.findUnique({
-      where: { id: projectIdSchema.parse((req.params as { id: string }).id) },
+      where: { id: idOf(req.params) },
+      include: { events: { take: 100, orderBy: { createdAt: "desc" } } },
     });
-    if (!job) fail(404);
-    return job;
+    if (!job) projectFail(404);
+    return publicJob(job);
+  });
+  app.post(
+    "/api/v1/jobs/:id/cancel",
+    secured("projects:update"),
+    async (req, reply) => {
+      const id = idOf(req.params);
+      const actor = await authenticate(
+        req.headers.authorization,
+        "projects:update",
+      );
+      await db.$transaction(async (tx) => {
+        const job = await tx.job.findUnique({ where: { id } });
+        if (!job) projectFail(404);
+        if (job.operation === "remove")
+          await authenticate(req.headers.authorization, "projects:delete");
+        await projectLock(tx, job.projectId);
+        const result = await tx.job.updateMany({
+          where: { id, status: "queued", attempts: 0 },
+          data: {
+            status: "cancelled",
+            finishedAt: new Date(),
+            error: "Cancelled before execution",
+          },
+        });
+        if (!result.count)
+          projectFail(409, "Only queued jobs can be cancelled");
+        const payload = job.payload as {
+          previousDesiredState?: string;
+          previousObservedState?: string;
+          previousMaintenance?: boolean;
+        } | null;
+        await tx.project.update({
+          where: { id: job.projectId },
+          data: {
+            desiredState: payload?.previousDesiredState ?? "stopped",
+            observedState: payload?.previousObservedState ?? "created",
+            ...(job.operation === "maintenance"
+              ? { maintenanceEnabled: payload?.previousMaintenance ?? false }
+              : {}),
+          },
+        });
+        if (job.deploymentId)
+          await tx.deployment.update({
+            where: { id: job.deploymentId },
+            data: { status: "cancelled" },
+          });
+        await tx.jobEvent.create({
+          data: { jobId: id, message: "cancelled", progress: job.progress },
+        });
+        await audit(tx, actor.userId, "job.cancel", id, req.id);
+      });
+      return reply.send({ status: "cancelled" });
+    },
+  );
+  app.post(
+    "/api/v1/jobs/:id/retry",
+    secured("projects:update", undefined, 202),
+    async (req, reply) => {
+      const id = idOf(req.params);
+      return reply.code(202).send(
+        await mutate(
+          req,
+          "projects:update",
+          { method: "retry", id },
+          async (tx, actor) => {
+            const job = await tx.job.findUnique({
+              where: { id },
+              include: { deployment: true },
+            });
+            if (!job) projectFail(404);
+            if (job.status !== "failed")
+              projectFail(409, "Only failed jobs can be retried");
+            if (
+              job.deployment &&
+              Object.values(
+                applicationSpecSchema.parse(job.deployment.spec).services,
+              ).some((s) => s.type !== "postgres" && s.hooks.length)
+            )
+              projectFail(
+                409,
+                "Migration jobs need explicit operator review and a new deployment",
+              );
+            if (job.operation === "remove")
+              await authenticate(req.headers.authorization, "projects:delete");
+            await projectLock(tx, job.projectId);
+            return enqueue(tx, job.projectId, job.operation, actor, req.id);
+          },
+        ),
+      );
+    },
+  );
+  app.get("/api/v1/dashboard", secured("projects:read"), async () => {
+    const groups = await db.project.groupBy({
+      by: ["observedState"],
+      where: { deletedAt: null },
+      _count: true,
+    });
+    let host: unknown = null;
+    try {
+      host = await agent({ operation: "host-info" });
+    } catch {
+      /* health remains useful when agent is offline */
+    }
+    return {
+      health: host ? "ready" : "agent-unavailable",
+      counts: Object.fromEntries(
+        groups.map((g) => [g.observedState, g._count]),
+      ),
+      host,
+    };
   });
   app.get("/api/v1/tokens", secured("admin"), async () =>
     db.apiToken.findMany({

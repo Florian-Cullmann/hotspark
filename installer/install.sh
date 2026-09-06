@@ -41,16 +41,17 @@ prepare_paths() {
   chown 10001:10001 /var/lib/hotspark/database
   install -d -m 0755 /var/lib/hotspark/routes
   install -d -o 10001 -g 10001 -m 0700 /var/lib/hotspark/acme
+  install -d -m 0700 /run/hotspark-secrets
   install -d -o root -g 10001 -m 0750 /run/hotspark
-  printf 'd /run/hotspark 0750 root 10001 -\n' > /etc/tmpfiles.d/hotspark.conf
-  for name in database_password admin_password; do
+  printf 'd /run/hotspark 0750 root 10001 -\nd /run/hotspark-secrets 0700 root root -\n' > /etc/tmpfiles.d/hotspark.conf
+  for name in database_password admin_password secrets_key agent_token; do
     if [ ! -e "/etc/hotspark/secrets/$name" ]; then openssl rand -hex 32 > "/etc/hotspark/secrets/$name"; fi
     chown 10001:10001 "/etc/hotspark/secrets/$name"
     chmod 0400 "/etc/hotspark/secrets/$name"
   done
 }
 install_release() {
-  version=${HOTSPARK_VERSION:-0.1.0}
+  version=${HOTSPARK_VERSION:-0.3.0}
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Version must be a numeric release version.'
   release="/opt/hotspark/releases/$version"
   if [ ! -d "$release" ]; then
@@ -100,6 +101,41 @@ TRAEFIK
   fi
   chown root:10001 /etc/hotspark/traefik.yaml
   chmod 0640 /etc/hotspark/traefik.yaml
+  if [ -n "${HOTSPARK_ACME_EMAIL:-}" ]; then
+    [[ "$HOTSPARK_ACME_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || die 'Invalid ACME email.'
+    cat > /etc/hotspark/traefik.yaml <<TLS
+entryPoints:
+  web:
+    address: ':8080'
+    http:
+      redirections:
+        entryPoint:
+          to: ':443'
+          scheme: https
+  websecure:
+    address: ':8443'
+  health:
+    address: ':8082'
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+ping:
+  entryPoint: health
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: '$HOTSPARK_ACME_EMAIL'
+      storage: /acme/acme.json
+      httpChallenge:
+        entryPoint: web
+log:
+  format: json
+TLS
+    sed -i 's/^TLS_ENABLED=.*/TLS_ENABLED=true/' /etc/hotspark/platform.env
+    chown root:10001 /etc/hotspark/traefik.yaml
+    chmod 0640 /etc/hotspark/traefik.yaml
+  fi
   install -m 0755 "$release/installer/platform" /usr/local/bin/platform
 }
 compose() { docker compose --env-file /etc/hotspark/platform.env --project-name hotspark -f "$release/deployments/compose.yaml" "$@"; }
@@ -108,6 +144,7 @@ start_platform() {
   compose build --pull
   compose up -d --wait --wait-timeout 180 database
   compose run --rm --no-deps api node --input-type=module -e 'import {connectDatabase} from "./dist/packages/database/src/index.js"; import {execFileSync} from "node:child_process"; await connectDatabase(); execFileSync("./node_modules/.bin/prisma",["migrate","deploy","--schema","packages/database/prisma/schema.prisma"],{stdio:"inherit"});'
+  if [ -n "${HOTSPARK_ACME_EMAIL:-}" ]; then compose up -d --force-recreate proxy; fi
   compose up -d --wait --wait-timeout 240
   curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 http://127.0.0.1:3001/api/v1/ready >/dev/null
   curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --max-time 5 http://127.0.0.1:3000 >/dev/null

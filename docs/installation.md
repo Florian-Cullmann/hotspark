@@ -25,7 +25,7 @@ There is no public release host yet. `example.org` is a placeholder. `scripts/re
 ```bash
 curl -fsSL https://YOUR-RELEASE-HOST/install.sh -o install.sh
 # Review install.sh and verify its signature/checksum using independently trusted metadata.
-sudo env HOTSPARK_VERSION=0.1.0 \
+sudo env HOTSPARK_VERSION=0.3.0 \
   HOTSPARK_RELEASE_BASE_URL=https://YOUR-RELEASE-HOST/releases \
   HOTSPARK_RELEASE_SHA256=TRUSTED_64_CHARACTER_HEX_DIGEST \
   sh install.sh
@@ -41,7 +41,7 @@ The archive URL is `<base>/v<version>/hotspark-<version>.tar.gz`. Archives have 
 | `/etc/hotspark/traefik.yaml`         | Static proxy configuration                                                 |
 | `/etc/hotspark/secrets/`             | Root-only directory; service-owned 0400 files                              |
 | `/var/lib/hotspark/database/`        | Control-plane PostgreSQL data                                              |
-| `/var/lib/hotspark/projects/<UUID>/` | Root-only generated Compose, plans, secrets, current pointer               |
+| `/var/lib/hotspark/projects/<UUID>/` | Root-only generated Compose, plans, encrypted vaults, current pointer      |
 | Docker named volumes `hs-<UUID>_*`   | Hosted PostgreSQL data                                                     |
 | `/var/lib/hotspark/routes/`          | Agent-written, proxy-readable dynamic routes                               |
 | `/var/lib/hotspark/acme/`            | uid 10001, 0700, certificate account state                                 |
@@ -52,6 +52,8 @@ The archive URL is `<base>/v<version>/hotspark-<version>.tar.gz`. Archives have 
 | `/var/log/hotspark/`                 | Reserved exported diagnostics; normal logs use bounded Docker local driver |
 
 No project data is stored under the release directory. Restart policies and systemd-enabled Docker restore containers on boot.
+
+Runtime plaintext secrets live in `/run/hotspark-secrets/<UUID>` and are restored by the agent from encrypted vaults after reboot. Preserve `/etc/hotspark/secrets/secrets_key` with your secure backups.
 
 ## Access and HTTPS
 
@@ -64,7 +66,7 @@ platform doctor
 
 Sign in at <http://localhost:3000> as `admin@localhost`. Changing the bootstrap file does not rotate an existing database password or administrator login.
 
-To enable public application HTTPS, configure DNS and inbound TCP 80/443, and merge these settings into `/etc/hotspark/traefik.yaml`:
+For initial automated HTTPS configuration, set `HOTSPARK_ACME_EMAIL=you@example.com` when running the installer. Configure DNS and inbound TCP 80/443 first. This enables the resolver and HTTP redirect and recreates the proxy once. To configure it manually, merge these settings into `/etc/hotspark/traefik.yaml`:
 
 ```yaml
 entryPoints:
@@ -102,7 +104,7 @@ sudo platform uninstall --platform-only
 
 This removes platform containers and internal Compose networks. It preserves configuration, release files, all platform/application data, external proxy network and hosted containers. Hosted apps continue running; HTTP routing stops because Traefik is removed. Reinstall the same release to restore the control plane.
 
-Removing a hosted application is a separate root-only operation: identify its UUID, then run `docker compose -p hs-UUID -f /var/lib/hotspark/projects/UUID/compose.json down` and remove only its route file. This preserves named volumes and secrets. There is no destructive deletion API yet.
+Removing a hosted application uses `DELETE /api/v1/projects/:id` or the UI delete control. It queues container/route removal, releases domains after success and soft-deletes metadata while preserving named volumes, vaults and plans. There is no persistent-data deletion API.
 
 Persistent deletion is a third, deliberate step: after independently verified backups, enumerate that project's named volumes with Docker labels, review each volume name, and explicitly remove only those selected volumes and its secrets directory. Control-plane deletion separately concerns `/var/lib/hotspark/database`. No uninstall command uses `down --volumes`, `docker system prune`, or recursive application-data deletion. Metadata cleanup and retention APIs remain future work.
 

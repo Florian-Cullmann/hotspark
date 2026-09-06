@@ -34,6 +34,9 @@ model Project {
  restoreOnDrift Boolean @default(true)
  revision Int @default(1)
  runtimeVersion Int @default(1)
+ activeDeploymentId String? @db.Uuid
+ maintenanceEnabled Boolean @default(false)
+ maintenanceObserved Boolean @default(false)
  lastObservedAt DateTime?
  deletedAt DateTime?
  createdAt DateTime @default(now())
@@ -64,8 +67,23 @@ model Deployment {
  project Project @relation(fields:[projectId],references:[id])
  spec Json
  status String @default("queued")
+ actorId String?
+ tokenId String?
+ previousReleaseId String? @db.Uuid
+ rollbackOfId String? @db.Uuid
+ encryptedSecrets String?
+ sources Json?
+ images Json?
+ health Json?
+ resolvedSpec Json?
+ error String?
+ maintenancePolicy String @default("never")
+ startedAt DateTime?
+ finishedAt DateTime?
+ activatedAt DateTime?
  createdAt DateTime @default(now())
  jobs Job[]
+ @@index([projectId,createdAt])
 }
 model Job {
  id String @id @default(uuid()) @db.Uuid

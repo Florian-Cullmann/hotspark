@@ -3,6 +3,7 @@
   "include": [
     "apps/api/src/**/*.ts",
     "apps/agent/src/**/*.ts",
+    "apps/maintenance/src/**/*.ts",
     "packages/**/*.ts"
   ],
   "exclude": ["node_modules", "dist", "tests"]

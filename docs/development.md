@@ -29,15 +29,30 @@ Use `npx prisma migrate dev --schema packages/database/prisma/schema.prisma` aga
 
 Keep changes to privileged behavior narrow. Add rejection tests for new intent fields and verify actual rendered networks/volumes/command arguments. Any new remote-agent transport needs explicit authentication, authorization and replay/reconciliation design. No generic command executor belongs in the public API.
 
-## Disposable host smoke test
+## Disposable host provider integration
 
-After installing on a disposable server, run the following there with this checkout available:
+After installing v0.3.0 on a disposable Debian host, run from this checkout as root:
+
+```bash
+bash tests/providers.integration.sh --disposable-host
+```
+
+This pauses the normal API worker, runs real BuildKit/Compose fixtures through the API service layer and durable jobs, and restores the API on exit. Node with PostgreSQL 16, Next standalone with PostgreSQL 18, Prisma migrations, React/Vite with nginx, pnpm/Node 22, Yarn 4, runtime secrets, log redaction, lifecycle and reconciliation are exercised. The harness maps explicitly named fixture Git sources to checked-in build contexts using an injected test runner; production has no local-path source option. It intentionally preserves test projects and data. Never run it on a production host.
+
+Database integration uses a disposable PostgreSQL container and simulated agent responses for deterministic crash/lease/idempotency tests. Unit tests reject unauthorized agent requests and unsafe inputs. Actual ACME issuance, remote agents, hostile build isolation and disaster recovery are not covered by these tests.
+
+To check the installed HTTP API, worker and authenticated agent together:
 
 ```bash
 docker run --rm -i --network host --user 10001:10001 \
-  -e HOTSPARK_TEST_GIT=true \
   --mount type=bind,src=/etc/hotspark/secrets/admin_password,dst=/run/secrets/admin_password,readonly \
-  hotspark/api:0.1.0 node --input-type=module-typescript < tests/host-smoke.ts
+  hotspark/api:0.3.0 node --input-type=module-typescript < tests/live-smoke.ts
 ```
 
-This operator-run test probe uses host networking to check the actual loopback ports; hosted applications never use host networking. It creates two image-based projects with PostgreSQL, verifies routing and independent stop/start, checks the UI/API rewrite, and optionally builds a public Git repository at a fixed commit. It deliberately preserves the test projects and data. The Git fixture's Dockerfile and dependencies belong to an external project; this is a build-path test, not a reproducibility or security endorsement.
+Only this operator test probe uses host networking. It creates a PostgreSQL project, exercises idempotency/start/stop/restart/delete and retains the project's data. `TEST_PROVIDERS=pnpm,yarn` can select only the package-manager fixture builds in the provider harness.
+
+`bash tests/tls.integration.sh --disposable-host` verifies TLS routing and redirects with an isolated Traefik container on loopback ports 18080/18443. It removes only its own test container and temporary configuration, and does not test ACME issuance.
+
+Run `bash tests/releases.integration.sh --disposable-host` for immutable Git revision builds, blue/green HTTP switching, failed candidate preservation, image rollback, maintenance, lifecycle and interrupted migration recovery. The test transport maps exactly one GitHub fixture repository to a local Git repository; the production fetcher and real runtime are used. Both host harnesses retain fixture projects/data for inspection and temporarily stop the ordinary API worker.
+
+Optional browser smoke: install Playwright Core 1.58.2 in an external test-tool directory and use an installed Chrome. Run `tests/ui.e2e.ts` with `npx tsx`, setting `PLAYWRIGHT_MODULE` to its `index.mjs`, `CHROME_PATH`, `HOTSPARK_TEST_URL`, and `TEST_PROJECT_ID`. Supply the administrator password on stdin. This test toggles maintenance, so select a disposable fixture project. Browser tooling is not installed on the production server or added to platform runtime dependencies.

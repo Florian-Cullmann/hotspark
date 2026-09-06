@@ -49,3 +49,8 @@ CREATE UNIQUE INDEX "IdempotencyRecord_actorId_key_key" ON "IdempotencyRecord"("
 -- AddForeignKey
 ALTER TABLE "JobEvent" ADD CONSTRAINT "JobEvent_jobId_fkey" FOREIGN KEY ("jobId") REFERENCES "Job"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+
+-- Preserve the effective intent of legacy projects; never stop a running stack just because columns were added.
+UPDATE "Project" p SET "desiredState" = CASE
+  WHEN (SELECT j.operation FROM "Job" j WHERE j."projectId"=p.id AND j.status='succeeded' ORDER BY j."createdAt" DESC LIMIT 1) IN ('deploy','start') THEN 'running'
+  ELSE 'stopped' END;

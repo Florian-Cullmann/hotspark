@@ -1,6 +1,8 @@
+import { secret } from "../../../packages/shared/src/index.js";
 import { mkdir, chmod, chown, lstat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createAgent } from "./app.js";
+import { ReleaseRuntime } from "./releases.js";
 import { Runtime } from "./runtime.js";
 const socket = process.env.AGENT_SOCKET ?? "/run/hotspark/agent.sock";
 await mkdir(dirname(socket), { recursive: true, mode: 0o750 });
@@ -12,14 +14,24 @@ try {
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 }
-const app = createAgent(
-  new Runtime(
-    process.env.STATE_ROOT ?? "/var/lib/hotspark/projects",
-    process.env.ROUTES_ROOT ?? "/var/lib/hotspark/routes",
-    undefined,
-    process.env.TLS_ENABLED === "true",
-  ),
+const runtime = new Runtime(
+  process.env.STATE_ROOT ?? "/var/lib/hotspark/projects",
+  process.env.ROUTES_ROOT ?? "/var/lib/hotspark/routes",
+  undefined,
+  process.env.TLS_ENABLED === "true",
+  await secret("SECRETS_KEY"),
+  process.env.WORKLOAD_SECRETS_ROOT ?? "/run/hotspark-secrets",
 );
+const releases = new ReleaseRuntime(
+  runtime,
+  process.env.STATE_ROOT ?? "/var/lib/hotspark/projects",
+  process.env.ROUTES_ROOT ?? "/var/lib/hotspark/routes",
+  process.env.WORKLOAD_SECRETS_ROOT ?? "/run/hotspark-secrets",
+  await secret("SECRETS_KEY"),
+  process.env.TLS_ENABLED === "true",
+);
+await releases.recover();
+const app = createAgent(releases, await secret("AGENT_TOKEN"));
 await app.listen({ path: socket });
 await chown(socket, 0, 10001);
 await chmod(socket, 0o660);
