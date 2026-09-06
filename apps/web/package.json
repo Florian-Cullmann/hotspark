@@ -1,0 +1,16 @@
+{
+  "name": "@hotspark/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build --webpack",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "16.3.4",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  }
+}

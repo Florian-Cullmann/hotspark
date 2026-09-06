@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[ "$(id -u)" -eq 0 ] || { echo 'Run as root.' >&2; exit 1; }
+compose() { docker compose --env-file /etc/hotspark/platform.env --project-name hotspark -f /opt/hotspark/current/deployments/compose.yaml "$@"; }
+case "${1:-help}" in
+ doctor)
+  systemctl is-active docker
+  docker compose version
+  compose ps
+  curl -fsS http://127.0.0.1:3001/api/v1/ready
+  test -S /run/hotspark/agent.sock
+  echo 'Doctor checks passed.'
+  ;;
+ update)
+  echo 'Automatic updates are not implemented. Back up PostgreSQL and application volumes, stage a versioned release, review migrations, and follow docs/installation.md.' >&2
+  exit 2
+  ;;
+ uninstall)
+  [ "${2:-}" = --platform-only ] || { echo 'Usage: platform uninstall --platform-only. Hosted containers, releases, configuration and ALL data are preserved.' >&2; exit 2; }
+  exec 9>/run/lock/hotspark-install.lock
+  flock -n 9
+  compose down
+  echo 'Platform containers removed. Hosted applications keep running, but public routing is offline. All persistent data, configuration, releases, the external proxy network and this command are preserved. See docs/installation.md for explicit removal procedures.'
+  ;;
+ *) echo 'Usage: platform doctor | platform update | platform uninstall --platform-only' ;;
+esac

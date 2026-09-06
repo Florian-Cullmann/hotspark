@@ -1,0 +1,16 @@
+name: hotspark-dev
+services:
+  database:
+    image: postgres:17.7-bookworm@sha256:86e0b703649d7a792bd9243ee28afc9d8f7c6b2b5638077c9d6882d4d472bbfd
+    environment:
+      POSTGRES_USER: hotspark
+      POSTGRES_DB: hotspark
+      POSTGRES_PASSWORD: ${DEV_DB_PASSWORD:?required}
+    ports: ["127.0.0.1:55432:5432"]
+    volumes: [database:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD, pg_isready, -U, hotspark]
+      interval: 2s
+      retries: 30
+volumes:
+  database:

@@ -1,0 +1,50 @@
+{
+  "name": "hotspark",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "build": "npm run generate && tsc -p tsconfig.build.json && npm run build -w @hotspark/web",
+    "generate": "prisma generate --schema packages/database/prisma/schema.prisma",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/web/tsconfig.json",
+    "test": "vitest run && bash tests/installer.sh",
+    "test:integration": "bash tests/integration.sh",
+    "lint": "eslint . && bash -n installer/install.sh installer/platform scripts/*.sh tests/*.sh",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:migrate": "prisma migrate deploy --schema packages/database/prisma/schema.prisma",
+    "openapi": "tsx scripts/openapi.ts"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "10.3.0",
+    "@fastify/swagger": "9.7.0",
+    "@prisma/client": "6.19.3",
+    "fastify": "5.12.3",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.2",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "eslint": "9.39.2",
+    "prettier": "3.7.4",
+    "prisma": "6.19.3",
+    "tsx": "4.22.4",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.50.1",
+    "vitest": "4.1.11"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0",
+    "esbuild": "0.28.1"
+  }
+}

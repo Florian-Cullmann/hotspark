@@ -1,0 +1,136 @@
+name: hotspark
+x-security: &security
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "3"
+services:
+  database:
+    <<: *security
+    image: postgres:17.7-bookworm@sha256:86e0b703649d7a792bd9243ee28afc9d8f7c6b2b5638077c9d6882d4d472bbfd
+    user: "10001:10001"
+    environment:
+      POSTGRES_DB: hotspark
+      POSTGRES_USER: hotspark
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+    secrets: [database_password]
+    volumes: [/var/lib/hotspark/database:/var/lib/postgresql/data]
+    networks: [control]
+    healthcheck:
+      test: [CMD, pg_isready, -U, hotspark, -d, hotspark]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  agent:
+    <<: *security
+    image: hotspark/agent:${HOTSPARK_VERSION:?version required}
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+      target: agent
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      TLS_ENABLED: ${TLS_ENABLED:-false}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /run/hotspark:/run/hotspark
+      - /var/lib/hotspark/projects:/var/lib/hotspark/projects
+      - /var/lib/hotspark/routes:/var/lib/hotspark/routes
+    networks: [agent-egress]
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "require('http').get({socketPath:'/run/hotspark/agent.sock',path:'/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  api:
+    <<: *security
+    image: hotspark/api:${HOTSPARK_VERSION:?version required}
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+      target: api
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      DATABASE_PASSWORD_FILE: /run/secrets/database_password
+      ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
+    secrets: [database_password, admin_password]
+    volumes: [/run/hotspark:/run/hotspark:ro]
+    ports: ["127.0.0.1:3001:3001"]
+    networks: [control, admin]
+    depends_on:
+      database: { condition: service_healthy }
+      agent: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3001/api/v1/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  web:
+    <<: *security
+    image: hotspark/web:${HOTSPARK_VERSION:?version required}
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+      target: web
+    read_only: true
+    tmpfs: [/tmp]
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [control, admin]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  proxy:
+    <<: *security
+    image: traefik:v3.6.6@sha256:82d3d16dde0474a51fef00b28de143d48b67f7a27453224d5e7b5aaefff26a97
+    user: "10001:10001"
+    read_only: true
+    tmpfs: [/tmp]
+    ports: ["80:8080", "443:8443"]
+    volumes:
+      - /etc/hotspark/traefik.yaml:/etc/traefik/traefik.yaml:ro
+      - /var/lib/hotspark/routes:/etc/traefik/dynamic:ro
+      - /var/lib/hotspark/acme:/acme
+    networks: [proxy]
+    healthcheck:
+      test: [CMD, traefik, healthcheck, --ping]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+networks:
+  control: { internal: true }
+  admin: {}
+  agent-egress: {}
+  proxy: { external: true, name: hotspark-proxy }
+secrets:
+  database_password: { file: /etc/hotspark/secrets/database_password }
+  admin_password: { file: /etc/hotspark/secrets/admin_password }
