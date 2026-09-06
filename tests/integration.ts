@@ -1,3 +1,7 @@
+import {
+  runSystemTask,
+  retainOperationalHistory,
+} from "../apps/api/src/operations.js";
 import assert from "node:assert/strict";
 import { PrismaClient } from "@prisma/client";
 import { createApp } from "../apps/api/src/app.js";
@@ -39,7 +43,7 @@ const agent: AgentClient = async (op) => {
       : op.operation === "stop"
         ? "stopped"
         : "running";
-  states.set(op.projectId, state);
+  if ("projectId" in op && op.projectId) states.set(op.projectId, state);
   const result = { state };
   if (!("operationId" in op)) return {};
   completed.set(op.operationId, result);
@@ -364,6 +368,166 @@ try {
   assert.ok(
     (await db.project.findUniqueOrThrow({ where: { id } })).encryptedSecrets,
     "retains encrypted recovery data",
+  );
+  const operational = await app.inject({
+    method: "POST",
+    url: "/api/v1/system/backups",
+    headers: { ...headers, "idempotency-key": "backup-once" },
+    payload: {},
+  });
+  assert.equal(operational.statusCode, 202);
+  const replay = await app.inject({
+    method: "POST",
+    url: "/api/v1/system/backups",
+    headers: { ...headers, "idempotency-key": "backup-once" },
+    payload: {},
+  });
+  assert.equal(replay.json().taskId, operational.json().taskId);
+  let executions = 0;
+  const journal = new Map<string, unknown>();
+  const operationsAgent: AgentClient = async (op) => {
+    if (op.operation === "system-task-status")
+      return journal.get(op.taskId) ?? null;
+    if (op.operation === "backup") {
+      executions++;
+      const result = { artifacts: [{ sha256: "a".repeat(64), bytes: 123 }] };
+      journal.set(op.taskId, { status: "succeeded", result });
+      throw new Error("lost acknowledgement");
+    }
+    return agent(op);
+  };
+  await runSystemTask(db, operationsAgent);
+  const done = await db.systemTask.findUniqueOrThrow({
+    where: { id: operational.json().taskId },
+  });
+  assert.equal(done.status, "succeeded");
+  assert.equal(executions, 1);
+  const forbiddenToken = await app.inject({
+    method: "POST",
+    url: "/api/v1/tokens",
+    headers,
+    payload: { name: "readonly-operations", scopes: ["projects:read"] },
+  });
+  const forbiddenHeaders = {
+    authorization: `Bearer ${forbiddenToken.json().token}`,
+  };
+  for (const url of [
+    "/api/v1/system/doctor",
+    "/api/v1/system/metrics",
+    "/api/v1/system/tasks",
+  ])
+    assert.equal(
+      (await app.inject({ url, headers: forbiddenHeaders })).statusCode,
+      403,
+    );
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/system/backups",
+        headers: forbiddenHeaders,
+        payload: {},
+      })
+    ).statusCode,
+    403,
+  );
+  const monitoring = await app.inject({
+    method: "POST",
+    url: "/api/v1/tokens",
+    headers,
+    payload: { name: "monitor", scopes: ["system:read"] },
+  });
+  const monitorHeaders = { authorization: `Bearer ${monitoring.json().token}` };
+  assert.equal(
+    (
+      await app.inject({
+        url: "/api/v1/system/metrics",
+        headers: monitorHeaders,
+      })
+    ).statusCode,
+    200,
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/system/backups",
+        headers: monitorHeaders,
+        payload: {},
+      })
+    ).statusCode,
+    403,
+  );
+  const metric = await app.inject({ url: "/api/v1/system/metrics", headers });
+  assert.equal(metric.statusCode, 200);
+  assert.ok(metric.body.includes("hotspark_queue_depth"));
+  assert.ok(!metric.body.includes("new-secret-value"));
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/logout",
+        headers: forbiddenHeaders,
+      })
+    ).statusCode,
+    204,
+  );
+  assert.equal(
+    (await app.inject({ url: "/api/v1/projects", headers: forbiddenHeaders }))
+      .statusCode,
+    401,
+  );
+  const updateGate = await app.inject({
+    method: "POST",
+    url: "/api/v1/system/updates",
+    headers,
+    payload: { version: "0.4.1", sha256: "a".repeat(64) },
+  });
+  assert.equal(updateGate.statusCode, 202);
+  const duringUpdate = await app.inject({
+    method: "POST",
+    url: `/api/v1/projects/${sdkCreated.projectId}/restart`,
+    headers,
+  });
+  assert.equal(
+    duringUpdate.statusCode,
+    409,
+    "update gate protects agent replacement",
+  );
+  assert.equal(
+    (
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/system/backups",
+        headers,
+        payload: {},
+      })
+    ).statusCode,
+    409,
+  );
+  await db.systemTask.update({
+    where: { id: updateGate.json().taskId },
+    data: { status: "failed", finishedAt: new Date() },
+  });
+  const oldTask = await db.systemTask.create({
+    data: {
+      kind: "backup",
+      input: {},
+      actorId: "fixture",
+      status: "succeeded",
+      finishedAt: new Date(Date.now() - 200 * 86400000),
+    },
+  });
+  await retainOperationalHistory(db);
+  assert.equal(
+    await db.systemTask.findUnique({ where: { id: oldTask.id } }),
+    null,
+  );
+  assert.ok(
+    await db.systemTask.findUnique({
+      where: { id: operational.json().taskId },
+    }),
+    "recent task result retained",
   );
   console.log(
     "Integration passed: async provisioning, idempotency, encryption, permissions, domain reservations, durable replay, retries, reconciliation, cancellation, patch, delete, SDK and migrations.",

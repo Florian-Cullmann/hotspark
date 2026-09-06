@@ -144,3 +144,7 @@ curl -fsS "$HOTSPARK_URL/api/v1/projects" \
 ```
 
 The repository must enable Next standalone output, include a lockfile, generate its Prisma client during build, and commit migrations. Database credentials and `DATABASE_URL` are generated automatically. For a new revision, PATCH the specification or queue `/projects/:id/deployments` to resolve the branch again. Start/stop/restart do not resolve Git or build.
+
+## Operations (0.4)
+
+See [automation](api-automation.md) for a complete machine-driven workflow and [monitoring](monitoring.md) for authenticated doctor/metrics. Operational mutations under `/api/v1/system/` require `admin`, return `taskId` asynchronously and support idempotency keys. Poll `/api/v1/system/tasks/:id`; task success is distinct from request acceptance. Monitoring accepts `system:read`. Project resource usage uses `/api/v1/projects/:id/usage`. All CLI operations use these public routes.

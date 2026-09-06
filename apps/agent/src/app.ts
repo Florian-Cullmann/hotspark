@@ -35,11 +35,17 @@ export function createAgent(
       "inspect",
       "logs",
       "host-info",
+      "diagnostics",
+      "project-usage",
+      "system-task-status",
       "operation-status",
       "deployment-details",
       "cancel-deployment",
     ].includes(parsed.data.operation);
-    const project = "projectId" in parsed.data ? parsed.data.projectId : "";
+    const project =
+      "projectId" in parsed.data
+        ? (parsed.data.projectId ?? "system")
+        : "system";
     if (!read && busy.has(project))
       return reply.code(409).send({
         error: { code: "AGENT_BUSY", message: "Another operation is active" },

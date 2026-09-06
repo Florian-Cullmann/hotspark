@@ -37,7 +37,7 @@ DOCKER
 }
 prepare_paths() {
   install -d -m 0755 /opt/hotspark/releases /etc/hotspark /var/lib/hotspark /var/log/hotspark
-  install -d -m 0700 /etc/hotspark/secrets /var/lib/hotspark/projects /var/lib/hotspark/database
+  install -d -m 0700 /etc/hotspark/secrets /var/lib/hotspark/projects /var/lib/hotspark/database /var/lib/hotspark/backups /var/lib/hotspark/operations /var/lib/hotspark/buildkit
   chown 10001:10001 /var/lib/hotspark/database
   install -d -m 0755 /var/lib/hotspark/routes
   install -d -o 10001 -g 10001 -m 0700 /var/lib/hotspark/acme
@@ -51,7 +51,7 @@ prepare_paths() {
   done
 }
 install_release() {
-  version=${HOTSPARK_VERSION:-0.3.0}
+  version=${HOTSPARK_VERSION:-0.4.0}
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Version must be a numeric release version.'
   release="/opt/hotspark/releases/$version"
   if [ ! -d "$release" ]; then
@@ -136,7 +136,7 @@ TLS
     chown root:10001 /etc/hotspark/traefik.yaml
     chmod 0640 /etc/hotspark/traefik.yaml
   fi
-  install -m 0755 "$release/installer/platform" /usr/local/bin/platform
+  ln -sfn /opt/hotspark/current/installer/platform /usr/local/bin/platform
 }
 compose() { docker compose --env-file /etc/hotspark/platform.env --project-name hotspark -f "$release/deployments/compose.yaml" "$@"; }
 start_platform() {
@@ -156,7 +156,8 @@ start_platform() {
 main() {
   validate
   [ "${1:-}" != --validate-only ] || { log 'Host validation passed.'; return; }
-  exec 9>/run/lock/hotspark-install.lock
+  install -d -m 0700 /var/lib/hotspark/operations
+  exec 9>/var/lib/hotspark/operations/.update.lock
   flock -n 9 || die 'Another install or lifecycle operation is running.'
   install_docker
   prepare_paths

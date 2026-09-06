@@ -19,6 +19,7 @@ jobs:
       - run: npm test
       - run: npm run test:integration
       - run: npm run build
+      - run: node_modules/.bin/platform --help
       - run: npm run openapi && git diff --exit-code docs/openapi.json
       - run: npm audit --audit-level=high
       - run: bash scripts/release.sh

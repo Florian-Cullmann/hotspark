@@ -31,7 +31,7 @@ Keep changes to privileged behavior narrow. Add rejection tests for new intent f
 
 ## Disposable host provider integration
 
-After installing v0.3.0 on a disposable Debian host, run from this checkout as root:
+After installing v0.4.0 on a disposable Debian host, run from this checkout as root:
 
 ```bash
 bash tests/providers.integration.sh --disposable-host
@@ -46,7 +46,7 @@ To check the installed HTTP API, worker and authenticated agent together:
 ```bash
 docker run --rm -i --network host --user 10001:10001 \
   --mount type=bind,src=/etc/hotspark/secrets/admin_password,dst=/run/secrets/admin_password,readonly \
-  hotspark/api:0.3.0 node --input-type=module-typescript < tests/live-smoke.ts
+  hotspark/api:0.4.0 node --input-type=module-typescript < tests/live-smoke.ts
 ```
 
 Only this operator test probe uses host networking. It creates a PostgreSQL project, exercises idempotency/start/stop/restart/delete and retains the project's data. `TEST_PROVIDERS=pnpm,yarn` can select only the package-manager fixture builds in the provider harness.
@@ -56,3 +56,13 @@ Only this operator test probe uses host networking. It creates a PostgreSQL proj
 Run `bash tests/releases.integration.sh --disposable-host` for immutable Git revision builds, blue/green HTTP switching, failed candidate preservation, image rollback, maintenance, lifecycle and interrupted migration recovery. The test transport maps exactly one GitHub fixture repository to a local Git repository; the production fetcher and real runtime are used. Both host harnesses retain fixture projects/data for inspection and temporarily stop the ordinary API worker.
 
 Optional browser smoke: install Playwright Core 1.58.2 in an external test-tool directory and use an installed Chrome. Run `tests/ui.e2e.ts` with `npx tsx`, setting `PLAYWRIGHT_MODULE` to its `index.mjs`, `CHROME_PATH`, `HOTSPARK_TEST_URL`, and `TEST_PROJECT_ID`. Supply the administrator password on stdin. This test toggles maintenance, so select a disposable fixture project. Browser tooling is not installed on the production server or added to platform runtime dependencies.
+
+## Operational acceptance (0.4)
+
+`bash tests/acceptance.sh --disposable-host` runs a real Next.js + PostgreSQL Git/build/update/failure/rollback sequence, maintenance, a platform service restart, reconciliation, network/socket/resource checks, backup checksums and a real restore drill into a separate temporary database. It then removes only that drill database. Original fixture data and backups are retained. The fixture Git transport is test-injected; production source restrictions are unchanged.
+
+For a host/VM reboot, run `bash tests/operations.acceptance.sh --disposable-host prepare`, reboot the disposable environment, then run `... verify`. Do not reboot a shared production machine for this test. Host harnesses must run serially. A fresh Debian 13 cloud-image VM with no Docker/Node is used for installer acceptance; it is separate from existing hosted application data.
+
+The release pipeline packages checksummed archives and reviewed `release-policy.json` metadata. It does not publish/sign without a configured maintainer identity. Never mark incompatible migrations backward-compatible to bypass the updater's gate.
+
+`TEST_TARGET_VERSION=0.4.1 bash tests/updates.integration.sh --disposable-host` tests checksum rejection and a real versioned update through an operator-owned HTTPS mirror. Add `fail-health` as the second argument with a fresh target version to exercise restoration of the previous platform. It stages trusted local code as root; run only on the disposable host.

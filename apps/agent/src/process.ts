@@ -30,6 +30,7 @@ export const command: CommandRunner = async (
         PATH: "/usr/local/bin:/usr/bin:/bin",
         HOME: "/tmp",
         DOCKER_BUILDKIT: "1",
+        DOCKER_CONFIG: process.env.DOCKER_CONFIG ?? "/tmp/hotspark-docker",
         GIT_TERMINAL_PROMPT: "0",
         GIT_CONFIG_NOSYSTEM: "1",
         GIT_CONFIG_GLOBAL: "/dev/null",

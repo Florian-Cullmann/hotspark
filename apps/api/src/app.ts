@@ -1,3 +1,10 @@
+import { publicOpenAPI } from "./openapi.js";
+import { doctor, metrics, platformVersion } from "./operations.js";
+import {
+  backupInputSchema,
+  gcInputSchema,
+  updateInputSchema,
+} from "../../../packages/application-spec/src/index.js";
 import {
   createProject,
   updateProject,
@@ -9,6 +16,7 @@ import {
   publicDeployment,
   enqueue,
   projectLock,
+  platformGate,
   audit,
   fail as projectFail,
 } from "./projects.js";
@@ -89,7 +97,7 @@ export async function createApp(
   await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
   await app.register(swagger, {
     openapi: {
-      info: { title: "Hotspark API", version: "0.3.0" },
+      info: { title: "Hotspark API", version: platformVersion },
       servers: [{ url: "/" }],
       components: {
         securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
@@ -157,7 +165,10 @@ export async function createApp(
   function fail(statusCode: number): never {
     throw Object.assign(new Error("Request rejected"), { statusCode });
   }
-  async function authenticate(authorization: string | undefined, scope: Scope) {
+  async function authenticate(
+    authorization: string | undefined,
+    scope?: Scope,
+  ) {
     if (!authorization?.startsWith("Bearer ") || authorization.length > 256)
       fail(401);
     const token = await db.apiToken.findUnique({
@@ -171,10 +182,14 @@ export async function createApp(
       token.user.role !== "admin"
     )
       fail(401);
-    if (!hasScope(token.scopes, scope)) fail(403);
+    if (scope && !hasScope(token.scopes, scope)) fail(403);
     return token;
   }
-  const secured = (scope: Scope, body?: object, successStatus = 200) => ({
+  const secured = (
+    scope: Scope | undefined,
+    body?: object,
+    successStatus = 200,
+  ) => ({
     schema: {
       security: [{ bearerAuth: [] }],
       ...(body ? { body } : {}),
@@ -209,7 +224,7 @@ export async function createApp(
       });
     }
   });
-  app.get("/api/v1/openapi.json", async () => app.swagger());
+  app.get("/api/v1/openapi.json", async () => publicOpenAPI(app.swagger()));
   app.post(
     "/api/v1/auth/login",
     {
@@ -649,6 +664,15 @@ export async function createApp(
       return agent({ operation: "inspect", projectId: id });
     },
   );
+  app.get(
+    "/api/v1/projects/:id/usage",
+    secured("projects:read"),
+    async (req) => {
+      const id = idOf(req.params);
+      await getProject(id);
+      return agent({ operation: "project-usage", projectId: id });
+    },
+  );
   app.get("/api/v1/jobs/:id", secured("projects:read"), async (req) => {
     const job = await db.job.findUnique({
       where: { id: idOf(req.params) },
@@ -761,12 +785,113 @@ export async function createApp(
     }
     return {
       health: host ? "ready" : "agent-unavailable",
+      queueDepth: await db.job.count({ where: { status: "queued" } }),
+      failedDeployments: await db.deployment.count({
+        where: { status: "failed" },
+      }),
+      diskWarning:
+        !!host &&
+        (host as { disk: { available: number; total: number } }).disk
+          .available /
+          (host as { disk: { total: number } }).disk.total <
+          0.15,
       counts: Object.fromEntries(
         groups.map((g) => [g.observedState, g._count]),
       ),
       host,
     };
   });
+  app.get("/api/v1/auth/session", secured(undefined), async (req, reply) => {
+    const token = await authenticate(req.headers.authorization);
+    return reply.header("Cache-Control", "no-store").send({
+      userId: token.userId,
+      scopes: token.scopes,
+      expiresAt: token.expiresAt,
+    });
+  });
+  app.post(
+    "/api/v1/auth/logout",
+    secured(undefined, undefined, 204),
+    async (req, reply) => {
+      const token = await authenticate(req.headers.authorization);
+      await db.$transaction(async (tx) => {
+        await tx.apiToken.update({
+          where: { id: token.id },
+          data: { revokedAt: new Date() },
+        });
+        await audit(tx, token.userId, "auth.logout", token.id, req.id);
+      });
+      return reply.code(204).send();
+    },
+  );
+  app.get("/api/v1/system/doctor", secured("system:read"), async () =>
+    doctor(db, agent),
+  );
+  app.get(
+    "/api/v1/system/metrics",
+    secured("system:read"),
+    async (_req, reply) =>
+      reply.type("text/plain; version=0.0.4").send(await metrics(db, agent)),
+  );
+  app.get("/api/v1/system/events", secured("admin"), async () =>
+    db.platformEvent.findMany({
+      take: 100,
+      orderBy: { createdAt: "desc" },
+      select: { id: true, type: true, resourceId: true, createdAt: true },
+    }),
+  );
+  app.get("/api/v1/system/tasks", secured("admin"), async () =>
+    db.systemTask.findMany({ take: 100, orderBy: { createdAt: "desc" } }),
+  );
+  app.get("/api/v1/system/tasks/:id", secured("admin"), async (req) => {
+    const task = await db.systemTask.findUnique({
+      where: { id: idOf(req.params) },
+    });
+    if (!task) projectFail(404);
+    return task;
+  });
+  for (const [resource, kind, schema] of [
+    ["backups", "backup", backupInputSchema],
+    ["garbage-collections", "garbage-collect", gcInputSchema],
+    ["updates", "platform-update", updateInputSchema],
+  ] as const) {
+    app.post(
+      `/api/v1/system/${resource}`,
+      secured(
+        "admin",
+        z.toJSONSchema(schema, { target: "draft-7", io: "input" }),
+        202,
+      ),
+      async (req, reply) => {
+        const input = schema.parse(req.body);
+        if ("projectId" in input && input.projectId)
+          await getProject(input.projectId);
+        return reply.code(202).send(
+          await mutate(req, "admin", { kind, ...input }, async (tx, actor) => {
+            await platformGate(tx);
+            if (
+              kind === "platform-update" &&
+              ((await tx.job.count({
+                where: { status: { in: ["queued", "running"] } },
+              })) ||
+                (await tx.systemTask.count({
+                  where: { status: { in: ["queued", "running"] } },
+                })))
+            )
+              projectFail(
+                409,
+                "Wait for application and operational jobs to finish before updating",
+              );
+            const task = await tx.systemTask.create({
+              data: { kind, input, actorId: actor },
+            });
+            await audit(tx, actor, `${kind}.queued`, task.id, req.id);
+            return { taskId: task.id, status: task.status };
+          }),
+        );
+      },
+    );
+  }
   app.get("/api/v1/tokens", secured("admin"), async () =>
     db.apiToken.findMany({
       select: {

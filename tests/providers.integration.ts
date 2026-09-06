@@ -14,7 +14,7 @@ import {
 } from "../apps/api/src/worker.js";
 import { secret } from "../packages/shared/src/index.js";
 import { ReleaseRuntime } from "../apps/agent/src/releases.js";
-import { command } from "../apps/agent/src/process.js";
+import { workloadCommand } from "../apps/agent/src/buildkit.js";
 import { validateContext } from "../apps/agent/src/git.js";
 import { resourceName } from "../packages/providers/src/index.js";
 const db = new PrismaClient();
@@ -52,7 +52,7 @@ const runtime = new ReleaseRuntime(
   secretRoot,
   key,
   false,
-  command,
+  workloadCommand,
   async (source, directory) => {
     const provider = source.repository
       .split("/")

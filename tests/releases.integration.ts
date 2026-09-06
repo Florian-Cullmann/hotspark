@@ -1,3 +1,4 @@
+import { workloadCommand } from "../apps/agent/src/buildkit.js";
 // Operator-only disposable-host E2E. The sole test transport override maps one GitHub URL
 // to a local Git repository; source resolution, BuildKit, PostgreSQL and Traefik are real.
 import assert from "node:assert/strict";
@@ -19,8 +20,21 @@ const db = new PrismaClient(),
   secrets = "/run/hotspark-secrets";
 const key = await secret("SECRETS_KEY"),
   repo = await mkdtemp("/tmp/hotspark-git-");
-await cp("tests/fixtures/node", repo, { recursive: true });
-const original = await readFile(join(repo, "server.mjs"), "utf8");
+const nextFixture = process.env.RELEASE_FIXTURE === "next";
+await cp(nextFixture ? "tests/fixtures/next" : "tests/fixtures/node", repo, {
+  recursive: true,
+});
+if (nextFixture) {
+  await rm(join(repo, "app/page.jsx"));
+  await writeFile(
+    join(repo, "app/route.js"),
+    `import { PrismaClient } from '@prisma/client';
+export const dynamic = 'force-dynamic'; const db = new PrismaClient();
+export async function GET(){ await db.marker.upsert({where:{id:1},create:{id:1,value:'persistent'},update:{}}); return Response.json({ready:true,version:'VERSION',database:!!process.env.DATABASE_URL,marker:await db.marker.findUnique({where:{id:1}})},{status:STATUS}); }`,
+  );
+}
+const sourceFile = nextFixture ? "app/route.js" : "server.mjs";
+const original = await readFile(join(repo, sourceFile), "utf8");
 const git = (args: string[]) => command("/usr/bin/git", ["-C", repo, ...args]);
 await git(["init", "--initial-branch=main"]);
 await git(["config", "user.email", "fixture@localhost"]);
@@ -28,15 +42,19 @@ await git(["config", "user.name", "Fixture"]);
 const commits: string[] = [];
 for (const version of ["one", "two", "broken"]) {
   await writeFile(
-    join(repo, "server.mjs"),
-    original
-      .replace("ready: true,", `ready: true, version: "${version}",`)
-      .replace(
-        "res.end(\n",
-        version === "broken"
-          ? "res.statusCode = 500; res.end(\n"
-          : "res.end(\n",
-      ),
+    join(repo, sourceFile),
+    nextFixture
+      ? original
+          .replace("VERSION", version)
+          .replace("STATUS", version === "broken" ? "500" : "200")
+      : original
+          .replace("ready: true,", `ready: true, version: "${version}",`)
+          .replace(
+            "res.end(\n",
+            version === "broken"
+              ? "res.statusCode = 500; res.end(\n"
+              : "res.end(\n",
+          ),
   );
   await git(["add", "."]);
   await git(["commit", "-m", version]);
@@ -55,7 +73,7 @@ const run: CommandRunner = async (exe, args, options) => {
               : a,
         )
       : args;
-  return command(exe, mapped, options);
+  return workloadCommand(exe, mapped, options);
 };
 const resolvedContext = await mkdtemp("/tmp/hotspark-ref-");
 await git(["tag", "fixture", commits[1]!]);
@@ -115,7 +133,11 @@ async function call(
   return result.json();
 }
 async function complete(jobId: string, status = "succeeded") {
-  await runOneJob(db, agent);
+  for (let i = 0; i < 100; i++) {
+    const own = await db.job.findUniqueOrThrow({ where: { id: jobId } });
+    if (!["queued", "running"].includes(own.status)) break;
+    await runOneJob(db, agent);
+  }
   const job = await call(`jobs/${jobId}`);
   assert.equal(job.status, status, JSON.stringify(job));
   return job;
@@ -129,7 +151,8 @@ const spec = (commit: string) => ({
   deployment: { maintenance: "during-migrations" },
   services: {
     web: {
-      type: "node",
+      type: nextFixture ? "nextjs" : "node",
+      build: { standalone: nextFixture },
       source: {
         type: "git",
         repository: "https://github.com/hotspark-fixtures/releases.git",
@@ -325,6 +348,16 @@ try {
   const detail = await call(`deployments/${active}`);
   assert.ok(
     detail.runtime.events.some((e: { phase: string }) => e.phase === "active"),
+  );
+  await writeFile(
+    "/var/lib/hotspark/projects/acceptance-fixture.json",
+    JSON.stringify({
+      projectId,
+      siblingId: sibling.projectId,
+      domain,
+      activeDeploymentId: active,
+      nextFixture,
+    }),
   );
   console.log(
     `Release E2E passed; project ${projectId} retained for inspection.`,

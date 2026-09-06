@@ -1,0 +1,28 @@
+name: Release artifacts
+on:
+  push:
+    tags: ["v*.*.*"]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci && npm run generate
+      - run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm run format:check && npm run lint && npm run typecheck && npm test
+      - run: npm run test:integration && npm run build
+      - run: node_modules/.bin/platform --help
+      - run: npm run openapi && git diff --exit-code docs/openapi.json
+      - run: bash scripts/release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: artifacts/
+          if-no-files-found: error
+# Publication/signing is deliberately separate until maintainers configure a release identity.

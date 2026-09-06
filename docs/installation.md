@@ -61,6 +61,7 @@ Runtime plaintext secrets live in `/run/hotspark-secrets/<UUID>` and are restore
 ssh -L 3000:127.0.0.1:3000 root@SERVER
 # On the server:
 cat /etc/hotspark/secrets/admin_password
+cat /etc/hotspark/secrets/admin_password | platform login http://127.0.0.1:3001 --password-stdin
 platform doctor
 ```
 
@@ -92,7 +93,7 @@ Keep the existing `health` entrypoint, `providers`, `ping` and `log` settings. S
 
 ## Updates and recovery
 
-`platform update` currently exits with an explicit unsupported message; it never rewrites the running installer. Before a manual update, stop the API/worker, take a consistent PostgreSQL dump and back up hosted volumes/secrets. Stage a new version under `/opt/hotspark/releases`, build its images, review/apply migrations, update the configured version and run health checks using that release's Compose file. Advance `current` only after success. Database migrations may not be backward-compatible; reverting an image is not a database rollback. Restore from a verified backup when necessary.
+Version 0.4 adds the API-driven versioned updater described in [platform updates](platform-updates.md). The first upgrade from 0.3 requires versioned staging: stop the API/worker, take and verify a PostgreSQL dump, stage/build 0.4, apply its additive migrations, update `HOTSPARK_VERSION`, create the new root-only `operations` and `backups` directories, start platform services with health checks, then advance `current`. Preserve application data and old release files. The installer refuses to silently change an installed version.
 
 Inspect `docker compose --env-file /etc/hotspark/platform.env -f /opt/hotspark/current/deployments/compose.yaml logs --tail 100` for operational logs. Failed jobs require comparing their snapshot with generated plans and actual Docker state before retry. Builds/Compose changes are not rolled back automatically.
 

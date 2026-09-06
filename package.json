@@ -1,6 +1,6 @@
 {
   "name": "hotspark",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -12,24 +12,27 @@
   },
   "scripts": {
     "dev": "bash scripts/dev.sh",
-    "build": "npm run generate && tsc -p tsconfig.build.json && npm run build -w @hotspark/web",
+    "build": "npm run generate && tsc -p tsconfig.build.json && chmod +x dist/packages/cli/src/main.js && npm run build -w @hotspark/web",
     "generate": "prisma generate --schema packages/database/prisma/schema.prisma",
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/web/tsconfig.json",
     "test": "vitest run && bash tests/installer.sh",
     "test:integration": "bash tests/integration.sh",
-    "lint": "eslint . && bash -n installer/install.sh installer/platform scripts/*.sh tests/*.sh",
+    "lint": "eslint . && bash -n installer/*.sh installer/platform scripts/*.sh tests/*.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:migrate": "prisma migrate deploy --schema packages/database/prisma/schema.prisma",
     "openapi": "tsx scripts/openapi.ts",
     "test:e2e": "bash tests/releases.integration.sh",
-    "test:providers": "bash tests/providers.integration.sh"
+    "test:providers": "bash tests/providers.integration.sh",
+    "cli": "tsx packages/cli/src/main.ts",
+    "test:acceptance": "bash tests/acceptance.sh"
   },
   "dependencies": {
     "@fastify/rate-limit": "10.3.0",
     "@fastify/swagger": "9.7.0",
     "@prisma/client": "6.19.3",
     "fastify": "5.12.3",
+    "yaml": "2.9.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

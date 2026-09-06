@@ -1,0 +1,21 @@
+name: Bug report
+description: Report reproducible behavior; use private reporting for security defects.
+body:
+  - type: textarea
+    id: version
+    attributes:
+      label: Version and environment
+      description: Include Debian/Docker/platform versions. Do not include credentials or host addresses.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps, expected behavior and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted doctor report and relevant test results
+      description: Review before attaching. Never attach secrets, backups or raw Docker inspect output.

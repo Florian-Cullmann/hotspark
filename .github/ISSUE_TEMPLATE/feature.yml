@@ -1,0 +1,13 @@
+name: Feature request
+description: Describe a generic product need and its operational constraints.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and desired behavior
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Security, compatibility and data-lifecycle considerations

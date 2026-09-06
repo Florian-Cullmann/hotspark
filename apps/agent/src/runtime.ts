@@ -298,6 +298,15 @@ export class Runtime {
     return await this.read<Journal>(this.journalPath(id));
   }
   async execute(op: AgentOperation): Promise<unknown> {
+    if (
+      op.operation === "project-usage" ||
+      op.operation === "diagnostics" ||
+      op.operation === "system-task-status" ||
+      op.operation === "backup" ||
+      op.operation === "garbage-collect" ||
+      op.operation === "platform-update"
+    )
+      throw new Error("Operational dispatcher required");
     if (op.operation === "operation-status") return this.status(op.operationId);
     if (op.operation === "host-info") {
       const disk = await statfs(this.root);

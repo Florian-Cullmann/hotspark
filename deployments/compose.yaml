@@ -3,6 +3,9 @@ x-security: &security
   restart: unless-stopped
   security_opt: ["no-new-privileges:true"]
   cap_drop: [ALL]
+  pids_limit: 512
+  mem_limit: 1g
+  cpus: 2
   logging:
     driver: local
     options:
@@ -36,6 +39,7 @@ services:
     read_only: true
     tmpfs: [/tmp]
     environment:
+      DOCKER_CONFIG: /var/lib/hotspark/buildkit/docker-config
       TLS_ENABLED: ${TLS_ENABLED:-false}
       SECRETS_KEY_FILE: /run/secrets/secrets_key
       AGENT_TOKEN_FILE: /run/secrets/agent_token
@@ -46,6 +50,11 @@ services:
       - /run/hotspark-secrets:/run/hotspark-secrets
       - /var/lib/hotspark/projects:/var/lib/hotspark/projects
       - /var/lib/hotspark/routes:/var/lib/hotspark/routes
+      - /var/lib/hotspark/buildkit:/var/lib/hotspark/buildkit
+      - /var/lib/hotspark/operations:/var/lib/hotspark/operations
+      - /var/lib/hotspark/backups:/var/lib/hotspark/backups
+      - /var/lib/hotspark/acme:/var/lib/hotspark/acme:ro
+      - /etc/hotspark:/etc/hotspark:ro
     networks: [agent-egress]
     healthcheck:
       test:
@@ -68,6 +77,7 @@ services:
     read_only: true
     tmpfs: [/tmp]
     environment:
+      HOTSPARK_VERSION: ${HOTSPARK_VERSION:?version required}
       DATABASE_PASSWORD_FILE: /run/secrets/database_password
       ADMIN_PASSWORD_FILE: /run/secrets/admin_password
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}

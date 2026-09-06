@@ -1,3 +1,12 @@
+import {
+  configuredNotifications,
+  deliverNotifications,
+} from "./notifications.js";
+import {
+  runSystemTask,
+  retainOperationalHistory,
+  monitorOperationalHealth,
+} from "./operations.js";
 import { createApp } from "./app.js";
 import { connectDatabase } from "../../../packages/database/src/index.js";
 import { hashPassword, secret } from "../../../packages/shared/src/index.js";
@@ -33,12 +42,34 @@ const workers = Array.from({ length: 4 }, () =>
     }
   })(),
 );
+const notificationAdapter = await configuredNotifications();
+let notifiedAt = 0;
+const operationsWorker = (async () => {
+  while (!stopping) {
+    try {
+      await runSystemTask(db, client);
+      if (Date.now() - notifiedAt > 60000) {
+        await monitorOperationalHealth(db, client);
+        await deliverNotifications(db, notificationAdapter);
+        notifiedAt = Date.now();
+      }
+    } catch {
+      app.log.error("Operational worker failed");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+})();
 const reconciler = (async () => {
-  let last = 0;
+  let last = 0,
+    retention = 0;
   while (!stopping) {
     if (Date.now() - last >= 15000) {
       try {
         await reconcile(db, client);
+        if (Date.now() - retention > 3600000) {
+          await retainOperationalHistory(db);
+          retention = Date.now();
+        }
         await db.jobEvent.deleteMany({
           where: {
             createdAt: { lt: new Date(Date.now() - 30 * 86400000) },
@@ -58,7 +89,7 @@ for (const signal of ["SIGTERM", "SIGINT"])
     stopping = true;
     void (async () => {
       await app.close();
-      await Promise.all([...workers, reconciler]);
+      await Promise.all([...workers, reconciler, operationsWorker]);
       await db.$disconnect();
     })();
   });

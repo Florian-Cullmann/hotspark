@@ -1,3 +1,4 @@
+import { emitEvent } from "./operations.js";
 import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import {
@@ -38,7 +39,7 @@ interface Outcome {
   activeDeploymentId?: string | null;
   maintenance?: boolean;
   state?: string;
-  release?: { status: string; error?: string };
+  release?: { status: string; error?: string; buildDurationMs?: number };
   sources?: unknown;
   images?: unknown;
   health?: unknown;
@@ -217,6 +218,16 @@ export async function runOneJob(db: PrismaClient, client: AgentClient) {
     });
     if (retry) return;
     if (job.deploymentId) {
+      await emitEvent(
+        tx,
+        succeeded
+          ? payload?.rollbackOf
+            ? "deployment.rollback"
+            : "deployment.succeeded"
+          : "deployment.failed",
+        job.projectId,
+        `deployment:${job.deploymentId}`,
+      );
       if (succeeded)
         await tx.deployment.updateMany({
           where: {
@@ -234,6 +245,7 @@ export async function runOneJob(db: PrismaClient, client: AgentClient) {
             : outcome?.release?.status === "cancelled"
               ? "cancelled"
               : "failed",
+          buildDurationMs: outcome?.release?.buildDurationMs,
           startedAt: job.startedAt,
           finishedAt: new Date(),
           ...(succeeded ? { activatedAt: new Date() } : {}),
@@ -384,6 +396,16 @@ export async function reconcile(db: PrismaClient, client: AgentClient) {
             : {}),
         },
       });
+      if (
+        observed !== current.observedState &&
+        ["failed", "degraded"].includes(observed)
+      )
+        await emitEvent(
+          tx,
+          "application.unhealthy",
+          project.id,
+          `unhealthy:${project.id}:${Date.now()}`,
+        );
       const action = reconciliationAction(
         current.desiredState,
         state,

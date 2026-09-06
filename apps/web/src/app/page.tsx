@@ -12,8 +12,16 @@ import {
   type JobReference,
 } from "../../../../packages/sdk/src/index";
 import { applicationSpecSchema } from "../../../../packages/application-spec/src/index";
+import {
+  SystemOperations,
+  ProjectBackup,
+  ProjectResources,
+} from "../components/operations";
 import { Deployments } from "../components/deployments";
 type Dashboard = {
+  queueDepth: number;
+  failedDeployments: number;
+  diskWarning: boolean;
   health: string;
   counts: Record<string, number>;
   host: {
@@ -281,8 +289,16 @@ export default function Home() {
             <a href="#dashboard">Dashboard</a>
             <a href="#projects">Projects</a>
             <a href="#create">Create project</a>
+            <a href="#system">System</a>
             <button
-              onClick={() => {
+              onClick={async () => {
+                try {
+                  await api().request("auth/logout", { method: "POST" });
+                } catch {
+                  setMessage(
+                    "Server-side revocation failed; revoke the session through the tokens API.",
+                  );
+                }
                 setToken("");
                 setJobId("");
                 setProjects([]);
@@ -291,9 +307,20 @@ export default function Home() {
               Clear session
             </button>
           </nav>
+          {route === "system" && <SystemOperations client={releaseClient} />}
           {route === "dashboard" && (
             <>
               <h2>Dashboard</h2>
+              {dashboard?.diskWarning && (
+                <p role="alert">
+                  Disk pressure: less than 15% free. Review storage and run a
+                  cleanup dry-run.
+                </p>
+              )}
+              <p>
+                Queued jobs: {dashboard?.queueDepth ?? "—"} · Failed
+                deployments: {dashboard?.failedDeployments ?? "—"}
+              </p>
               <div className="cards">
                 <section>
                   <h3>Platform</h3>
@@ -637,6 +664,14 @@ export default function Home() {
               )}
               {tab === "settings" && (
                 <section>
+                  <ProjectResources
+                    client={releaseClient}
+                    projectId={selected.id}
+                  />
+                  <ProjectBackup
+                    client={releaseClient}
+                    projectId={selected.id}
+                  />
                   <h3>Application specification</h3>
                   <form
                     onSubmit={(e) => {

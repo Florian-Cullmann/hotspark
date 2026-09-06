@@ -9,6 +9,7 @@ export const scopes = [
   "projects:delete",
   "logs:read",
   "domains:manage",
+  "system:read",
   "admin",
   "read",
   "deploy",

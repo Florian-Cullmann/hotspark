@@ -91,6 +91,16 @@ export async function audit(
 export async function projectLock(tx: Prisma.TransactionClient, id: string) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${id}))`;
 }
+export async function platformGate(tx: Prisma.TransactionClient) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('hotspark:platform-update'))`;
+  if (
+    await tx.systemTask.findFirst({
+      where: { kind: "platform-update", status: { in: ["queued", "running"] } },
+      select: { id: true },
+    })
+  )
+    fail(409, "Platform update is in progress");
+}
 export async function enqueue(
   tx: Prisma.TransactionClient,
   projectId: string,
@@ -103,6 +113,7 @@ export async function enqueue(
     maintenanceEnabled?: boolean;
   } = {},
 ) {
+  await platformGate(tx);
   const p = await tx.project.findUniqueOrThrow({ where: { id: projectId } });
   if (["deploy", "maintenance"].includes(operation) && p.runtimeVersion < 2)
     fail(409, "Legacy project requires explicit migration");

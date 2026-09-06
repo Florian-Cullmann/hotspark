@@ -45,6 +45,7 @@ interface ProjectState {
   pending?: { operationId: string; deploymentId: string };
 }
 export interface ReleaseRecord {
+  buildDurationMs?: number;
   version: 1;
   id: string;
   projectId: string;
@@ -476,6 +477,15 @@ export class ReleaseRuntime {
     };
   }
   async execute(op: AgentOperation): Promise<unknown> {
+    if (
+      op.operation === "project-usage" ||
+      op.operation === "diagnostics" ||
+      op.operation === "system-task-status" ||
+      op.operation === "backup" ||
+      op.operation === "garbage-collect" ||
+      op.operation === "platform-update"
+    )
+      throw new Error("Operational dispatcher required");
     if (op.operation === "operation-status")
       return read<Journal>(this.journalPath(op.operationId));
     if (op.operation === "host-info") return this.legacy.execute(op);
@@ -905,6 +915,7 @@ export class ReleaseRuntime {
           op.encryptedSecrets,
         );
         await checkpoint("building", 20, "build started");
+        const buildStarted = Date.now();
         for (const build of plan.builds) {
           const image = `hotspark/${op.projectId}/${build.id}:${op.deploymentId}`;
           const context = join(work, `${build.id}-template`);
@@ -1005,6 +1016,7 @@ export class ReleaseRuntime {
             record.images.push({ service: s.name, reference: s.image, digest });
             s.image = digest;
           }
+        record.buildDurationMs = Date.now() - buildStarted;
         await checkpoint("built", 45, "images built");
         if (await exists(join(dir, "cancel"))) {
           controller.abort();

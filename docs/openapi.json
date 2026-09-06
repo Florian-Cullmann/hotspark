@@ -1,22 +1,125 @@
 {
   "openapi": "3.0.3",
-  "info": { "title": "Hotspark API", "version": "0.3.0" },
+  "info": { "title": "Hotspark API", "version": "0.4.0" },
   "components": {
     "securitySchemes": { "bearerAuth": { "type": "http", "scheme": "bearer" } },
-    "schemas": {}
+    "schemas": {
+      "Project": {
+        "type": "object",
+        "required": ["id", "name", "spec", "desiredState", "observedState"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "spec": {
+            "type": "object",
+            "description": "Validated hotspark.dev/v1 ApplicationSpec; see create request schema"
+          },
+          "desiredState": {
+            "type": "string",
+            "enum": ["running", "stopped", "deleted"]
+          },
+          "observedState": { "type": "string" },
+          "activeDeploymentId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "maintenanceEnabled": { "type": "boolean" },
+          "maintenanceObserved": { "type": "boolean" }
+        }
+      },
+      "JobReference": {
+        "type": "object",
+        "required": ["projectId", "jobId"],
+        "properties": {
+          "projectId": { "type": "string", "format": "uuid" },
+          "jobId": { "type": "string", "format": "uuid" },
+          "deploymentId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "required": ["id", "status", "progress"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "projectId": { "type": "string", "format": "uuid" },
+          "deploymentId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": ["queued", "running", "succeeded", "failed", "cancelled"]
+          },
+          "progress": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "error": { "type": "string", "nullable": true },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "message": { "type": "string" },
+                "progress": { "type": "integer" }
+              }
+            }
+          }
+        }
+      },
+      "TaskReference": {
+        "type": "object",
+        "required": ["taskId", "status"],
+        "properties": {
+          "taskId": { "type": "string", "format": "uuid" },
+          "status": { "type": "string" }
+        }
+      },
+      "SystemTask": {
+        "type": "object",
+        "required": ["id", "kind", "status"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "kind": {
+            "type": "string",
+            "enum": ["backup", "garbage-collect", "platform-update"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["queued", "running", "succeeded", "failed"]
+          },
+          "result": { "type": "object", "nullable": true },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "Logs": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": { "type": "string", "maxLength": 262144 },
+          "stream": { "type": "string", "enum": ["stdout", "stderr", "both"] }
+        }
+      }
+    }
   },
   "paths": {
     "/api/v1/health": {
       "get": {
         "description": "Process liveness",
-        "responses": { "200": { "description": "Default Response" } }
+        "responses": { "200": { "description": "Default Response" } },
+        "operationId": "get__api_v1_health"
       }
     },
     "/api/v1/ready": {
-      "get": { "responses": { "200": { "description": "Default Response" } } }
+      "get": {
+        "responses": { "200": { "description": "Default Response" } },
+        "operationId": "get__api_v1_ready"
+      }
     },
     "/api/v1/openapi.json": {
-      "get": { "responses": { "200": { "description": "Default Response" } } }
+      "get": {
+        "responses": { "200": { "description": "Default Response" } },
+        "operationId": "get__api_v1_openapi_json"
+      }
     },
     "/api/v1/auth/login": {
       "post": {
@@ -49,7 +152,8 @@
             }
           }
         },
-        "responses": { "200": { "description": "Default Response" } }
+        "responses": { "200": { "description": "Default Response" } },
+        "operationId": "post__api_v1_auth_login"
       }
     },
     "/api/v1/projects": {
@@ -57,8 +161,15 @@
         "security": [{ "bearerAuth": [] }],
         "responses": {
           "200": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Project" }
+                }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -148,7 +259,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_projects"
       },
       "post": {
         "requestBody": {
@@ -575,8 +687,12 @@
         "security": [{ "bearerAuth": [] }],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -666,7 +782,17 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_projects",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
+          }
+        ]
       }
     },
     "/api/v1/projects/{id}": {
@@ -678,12 +804,22 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
           "200": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Project" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -773,7 +909,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_projects_id_"
       },
       "patch": {
         "requestBody": {
@@ -1204,12 +1341,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -1299,7 +1453,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "patch__api_v1_projects_id_"
       },
       "delete": {
         "security": [{ "bearerAuth": [] }],
@@ -1309,12 +1464,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -1404,7 +1576,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "delete__api_v1_projects_id_"
       }
     },
     "/api/v1/projects/{id}/start": {
@@ -1416,12 +1589,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -1511,7 +1701,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_projects_id_start"
       }
     },
     "/api/v1/projects/{id}/stop": {
@@ -1523,12 +1714,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -1618,7 +1826,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_projects_id_stop"
       }
     },
     "/api/v1/projects/{id}/restart": {
@@ -1630,12 +1839,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -1725,7 +1951,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_projects_id_restart"
       }
     },
     "/api/v1/projects/{id}/deploy": {
@@ -1737,12 +1964,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -1832,7 +2076,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_projects_id_deploy"
       }
     },
     "/api/v1/projects/{id}/deployments": {
@@ -1844,12 +2089,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -1939,7 +2201,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_projects_id_deployments"
       },
       "get": {
         "security": [{ "bearerAuth": [] }],
@@ -1949,6 +2212,12 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
@@ -2044,7 +2313,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_projects_id_deployments"
       }
     },
     "/api/v1/projects/{id}/rollbacks": {
@@ -2075,12 +2345,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -2170,7 +2457,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_projects_id_rollbacks"
       }
     },
     "/api/v1/projects/{id}/maintenance": {
@@ -2195,12 +2483,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -2290,7 +2595,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "put__api_v1_projects_id_maintenance"
       }
     },
     "/api/v1/deployments/{id}": {
@@ -2302,6 +2608,12 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
@@ -2397,7 +2709,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_deployments_id_"
       }
     },
     "/api/v1/deployments/{id}/logs": {
@@ -2409,6 +2722,12 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
@@ -2504,7 +2823,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_deployments_id_logs"
       }
     },
     "/api/v1/deployments/{id}/cancel": {
@@ -2516,6 +2836,19 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
@@ -2611,7 +2944,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_deployments_id_cancel"
       }
     },
     "/api/v1/projects/{id}/services": {
@@ -2623,6 +2957,12 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
@@ -2718,7 +3058,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_projects_id_services"
       }
     },
     "/api/v1/projects/{id}/domains": {
@@ -2730,6 +3071,12 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
@@ -2825,7 +3172,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_projects_id_domains"
       },
       "put": {
         "requestBody": {
@@ -2862,12 +3210,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -2957,7 +3322,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "put__api_v1_projects_id_domains"
       }
     },
     "/api/v1/projects/{id}/jobs": {
@@ -2969,6 +3335,12 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
@@ -3064,7 +3436,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_projects_id_jobs"
       }
     },
     "/api/v1/projects/{id}/logs": {
@@ -3076,12 +3449,47 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "service",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "lines",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["stdout", "stderr", "both"],
+              "default": "both"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Logs" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -3171,7 +3579,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_projects_id_logs"
       }
     },
     "/api/v1/projects/{id}/runtime": {
@@ -3183,6 +3592,12 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
@@ -3278,7 +3693,122 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_projects_id_runtime"
+      }
+    },
+    "/api/v1/projects/{id}/usage": {
+      "get": {
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "schema": { "type": "string" },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "get__api_v1_projects_id_usage"
       }
     },
     "/api/v1/jobs/{id}": {
@@ -3290,12 +3820,22 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
           }
         ],
         "responses": {
           "200": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Job" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -3385,7 +3925,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_jobs_id_"
       }
     },
     "/api/v1/jobs/{id}/cancel": {
@@ -3397,6 +3938,19 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
@@ -3492,7 +4046,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_jobs_id_cancel"
       }
     },
     "/api/v1/jobs/{id}/retry": {
@@ -3504,12 +4059,29 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
           "202": {
-            "description": "Default Response",
-            "content": { "application/json": { "schema": {} } }
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/JobReference" }
+              }
+            }
           },
           "400": {
             "description": "Default Response",
@@ -3599,7 +4171,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_jobs_id_retry"
       }
     },
     "/api/v1/dashboard": {
@@ -3698,7 +4271,1129 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_dashboard"
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "get__api_v1_auth_session"
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "204": {
+            "description": "Default Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "post__api_v1_auth_logout"
+      }
+    },
+    "/api/v1/system/doctor": {
+      "get": {
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "get__api_v1_system_doctor"
+      }
+    },
+    "/api/v1/system/metrics": {
+      "get": {
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "get__api_v1_system_metrics"
+      }
+    },
+    "/api/v1/system/events": {
+      "get": {
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "get__api_v1_system_events"
+      }
+    },
+    "/api/v1/system/tasks": {
+      "get": {
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "get__api_v1_system_tasks"
+      }
+    },
+    "/api/v1/system/tasks/{id}": {
+      "get": {
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "schema": { "type": "string" },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SystemTask" }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "get__api_v1_system_tasks_id_"
+      }
+    },
+    "/api/v1/system/backups": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "202": {
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskReference" }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "post__api_v1_system_backups",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
+          }
+        ]
+      }
+    },
+    "/api/v1/system/garbage-collections": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "retain": {
+                    "default": 5,
+                    "type": "integer",
+                    "minimum": 2,
+                    "maximum": 50
+                  },
+                  "dryRun": { "default": true, "type": "boolean" },
+                  "buildCache": { "default": false, "type": "boolean" }
+                },
+                "required": ["projectId"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "202": {
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskReference" }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "post__api_v1_system_garbage_collections",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
+          }
+        ]
+      }
+    },
+    "/api/v1/system/updates": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "pattern": "^\\d+\\.\\d+\\.\\d+$"
+                  },
+                  "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+                },
+                "required": ["version", "sha256"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "202": {
+            "description": "Accepted; poll the returned job/task",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskReference" }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" },
+                        "requestId": { "type": "string" }
+                      },
+                      "required": ["code", "message", "requestId"]
+                    }
+                  },
+                  "required": ["error"]
+                }
+              }
+            }
+          }
+        },
+        "operationId": "post__api_v1_system_updates",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
+          }
+        ]
       }
     },
     "/api/v1/tokens": {
@@ -3797,7 +5492,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_tokens"
       },
       "post": {
         "requestBody": {
@@ -3820,6 +5516,7 @@
                         "projects:delete",
                         "logs:read",
                         "domains:manage",
+                        "system:read",
                         "admin",
                         "read",
                         "deploy"
@@ -3933,7 +5630,17 @@
               }
             }
           }
-        }
+        },
+        "operationId": "post__api_v1_tokens",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
+          }
+        ]
       }
     },
     "/api/v1/tokens/{id}": {
@@ -3945,6 +5652,19 @@
             "in": "path",
             "name": "id",
             "required": true
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Reuse for identical mutations; seven-day retention where supported",
+            "schema": { "type": "string", "maxLength": 128 }
           }
         ],
         "responses": {
@@ -4040,7 +5760,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "delete__api_v1_tokens_id_"
       }
     },
     "/api/v1/audit-events": {
@@ -4139,7 +5860,8 @@
               }
             }
           }
-        }
+        },
+        "operationId": "get__api_v1_audit_events"
       }
     }
   },

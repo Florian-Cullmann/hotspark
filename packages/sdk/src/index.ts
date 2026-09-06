@@ -28,6 +28,8 @@ export class HotsparkClient {
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await fetch(new URL(`/api/v1/${path}`, this.baseUrl), {
       ...init,
+      redirect: "error",
+      signal: init.signal ?? AbortSignal.timeout(30000),
       headers: {
         ...(init.body !== undefined
           ? { "content-type": "application/json" }

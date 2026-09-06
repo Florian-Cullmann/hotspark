@@ -48,8 +48,8 @@ npm run test:integration
 ## Repository
 
 ```text
-apps/                 web, api, privileged agent
-packages/             application-spec, providers, database, shared, sdk
+apps/                 web, api, privileged agent, shared maintenance page
+packages/             application-spec, providers, database, shared, sdk, cli
 installer/            Debian bootstrap and platform lifecycle command
 deployments/          production Dockerfile/Compose and local database
 scripts/              development, release packaging, OpenAPI generation
@@ -59,10 +59,26 @@ docs/                architecture, security, installation, specification, develo
 
 Read [architecture](docs/architecture.md), [security](docs/security-model.md), [ApplicationSpec](docs/application-spec.md), and [development](docs/development.md). The [OpenAPI document](docs/openapi.json) is generated from the API route definitions.
 
-Before production use: implement remote-agent mTLS, backup/restore automation, release signing and prebuilt multi-architecture images, stronger build/network isolation, domain ownership verification, key rotation, and migration/rollback policies. Automatic updates and multi-user access are intentionally not advertised as complete.
+Before broader production use: validate encrypted off-host recovery, release signing and prebuilt multi-architecture images, stronger build/network isolation, domain ownership verification and key rotation. Remote-agent mTLS is required before adding remote workers. Unattended updates and multi-user authorization remain future work.
 
 Provisioning examples and behavior: [API](docs/api.md), [lifecycle](docs/application-lifecycle.md), [providers](docs/service-providers.md), [network isolation](docs/network-isolation.md), [secrets](docs/secrets.md), [agent protocol](docs/agent-protocol.md).
 
 License: [Apache-2.0](LICENSE).
 
 The 0.3 deployment engine builds immutable images, health-checks independent candidates, switches watched Traefik routes, supports a shared maintenance page, and rolls back to retained images. See [deployments](docs/deployments.md), [maintenance](docs/maintenance-mode.md), [rollback](docs/rollback.md), [database migrations](docs/database-migrations.md), and [recovery](docs/recovery.md).
+
+## Operations (0.4, unreleased)
+
+The public-API CLI supports login, project creation, deployments, lifecycle, maintenance, rollback, bounded logs, doctor, backups and conservative cleanup. The System UI displays diagnostics and durable operational tasks. Platform updates stage immutable versions and require a trusted checksum and reviewed migration compatibility.
+
+```bash
+npm run cli -- login https://YOUR_ADMIN_HOST --token-stdin < /secure/token
+npm run cli -- project create app.yaml
+npm run cli -- deploy my-app
+npm run cli -- logs my-app --service web --follow
+npm run cli -- doctor
+```
+
+On an installed server, `platform` supplies Node in a container. See [operations](docs/operations.md), [backups/restore](docs/backups.md), [platform updates](docs/platform-updates.md), [monitoring](docs/monitoring.md), [automation](docs/api-automation.md), [threat model](docs/threat-model.md) and [troubleshooting](docs/troubleshooting.md).
+
+Known production risks include trusted-code-only builds, shared proxy networking, incomplete build/storage quotas, unencrypted local backups, retained metadata growth, and no HA/remote-worker scheduling or automatic database rollback. Release hosting, signing/provenance and off-host restore certification remain work. This phase does not change the experimental status.

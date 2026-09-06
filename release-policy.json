@@ -1,0 +1,5 @@
+{
+  "version": "0.4.0",
+  "databaseCompatibility": "backward-compatible",
+  "upgradeFrom": ["0.3.0"]
+}

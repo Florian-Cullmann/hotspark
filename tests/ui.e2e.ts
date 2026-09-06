@@ -72,9 +72,34 @@ try {
         (b) => b.textContent === "Enable maintenance" && !b.disabled,
       ),
   );
+  await page.getByRole("button", { name: "settings", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Refresh resource usage", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    document.body.innerText.includes('"containers"'),
+  );
+  await page
+    .getByRole("heading", { name: "Project backup", exact: true })
+    .waitFor();
+  await page.evaluate(() => {
+    location.hash = "system";
+  });
+  await page.getByRole("heading", { name: "System", exact: true }).waitFor();
+  await page.waitForFunction(
+    () =>
+      document.body.innerText.includes("platform database") &&
+      !document.body.innerText.includes("Installed API version: Loading"),
+  );
+  await page
+    .getByRole("heading", { name: "Operational tasks", exact: true })
+    .waitFor();
+  await page
+    .getByRole("button", { name: "Create platform backup", exact: true })
+    .waitFor();
   assert.deepEqual(errors, []);
   console.log(
-    "UI E2E passed: login, active release, deployment history/detail, timeline, logs, rollback availability, maintenance toggle.",
+    "UI E2E passed: login, active release, deployment history/detail, timeline, logs, rollback availability, maintenance toggle, project resources and system diagnostics.",
   );
 } finally {
   await browser.close();

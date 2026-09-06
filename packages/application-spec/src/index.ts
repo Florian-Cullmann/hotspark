@@ -328,7 +328,58 @@ export const lifecycleStates = [
 export const desiredStates = ["running", "stopped", "deleted"] as const;
 const projectOp = { projectId: projectIdSchema };
 const mutation = { ...projectOp, operationId: z.string().uuid() };
+export const backupInputSchema = z
+  .object({ projectId: projectIdSchema.optional() })
+  .strict();
+export const gcInputSchema = z
+  .object({
+    projectId: projectIdSchema,
+    retain: z.number().int().min(2).max(50).default(5),
+    dryRun: z.boolean().default(true),
+    buildCache: z.boolean().default(false),
+  })
+  .strict();
+export const updateInputSchema = z
+  .object({
+    version: z.string().regex(/^\d+\.\d+\.\d+$/),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
 export const operationSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("diagnostics") }).strict(),
+  z
+    .object({
+      operation: z.literal("project-usage"),
+      projectId: projectIdSchema,
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("system-task-status"),
+      taskId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("backup"),
+      taskId: z.string().uuid(),
+      ...backupInputSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("garbage-collect"),
+      taskId: z.string().uuid(),
+      ...gcInputSchema.shape,
+    })
+    .strict(),
+  z
+    .object({
+      operation: z.literal("platform-update"),
+      taskId: z.string().uuid(),
+      ...updateInputSchema.shape,
+    })
+    .strict(),
   z
     .object({
       operation: z.literal("deploy"),

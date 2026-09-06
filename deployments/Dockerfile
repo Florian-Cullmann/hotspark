@@ -11,6 +11,7 @@ COPY packages/database/package.json ./packages/database/package.json
 COPY packages/shared/package.json ./packages/shared/package.json
 COPY packages/sdk/package.json ./packages/sdk/package.json
 COPY packages/providers/package.json ./packages/providers/package.json
+COPY packages/cli/package.json ./packages/cli/package.json
 RUN npm ci
 COPY apps ./apps
 COPY packages ./packages
@@ -35,6 +36,7 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
+COPY installer/update.sh /app/installer/update.sh
 ENV NODE_ENV=production
 CMD ["node","dist/apps/agent/src/main.js"]
 
@@ -51,3 +53,7 @@ WORKDIR /app
 COPY --from=build /app/dist/apps/maintenance/src/main.js /app/main.mjs
 USER 10001:10001
 CMD ["node","/app/main.mjs"]
+
+FROM api AS cli
+ENTRYPOINT ["node", "dist/packages/cli/src/main.js"]
+CMD ["help"]
